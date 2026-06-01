@@ -1,0 +1,85 @@
+{
+  "name": "symbio-basic",
+  "productName": "Symbio Basic",
+  "version": "1.0.0",
+  "description": "Symbio Basic — A symbiotic AI desktop companion. Growing, evolving, partnering with you. Not a tool, but a partner.",
+  "main": ".webpack/main",
+  "scripts": {
+    "start": "electron-forge start",
+    "package": "electron-forge package",
+    "make": "electron-forge make",
+    "publish": "electron-forge publish",
+    "lint": "eslint .",
+    "format": "prettier --write ."
+  },
+  "keywords": [],
+  "author": {
+    "name": "Beyond Horizons Institute & Contributors",
+    "url": "https://beyondhorizonsinst.wixsite.com/beyond-horizons-inst"
+  },
+  "contributors": [
+    {
+      "name": "Zyra Exe",
+      "role": "Creator & Visionary"
+    },
+    {
+      "name": "GLM 5.1 (via GitHub Copilot)",
+      "role": "Core Development Partner"
+    }
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Beyond-Horizons-Institute/symbio-basic"
+  },
+  "license": "AGPL-3.0",
+  "devDependencies": {
+    "@electron-forge/cli": "^7.11.1",
+    "@electron-forge/maker-deb": "^7.11.1",
+    "@electron-forge/maker-rpm": "^7.11.1",
+    "@electron-forge/maker-squirrel": "^7.11.1",
+    "@electron-forge/maker-zip": "^7.11.1",
+    "@electron-forge/plugin-auto-unpack-natives": "^7.11.1",
+    "@electron-forge/plugin-fuses": "^7.11.1",
+    "@electron-forge/plugin-webpack": "^7.11.1",
+    "@electron-forge/publisher-github": "^7.11.1",
+    "@electron/fuses": "^1.8.0",
+    "@types/hark": "^1.2.5",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@typescript-eslint/eslint-plugin": "^8.57.0",
+    "@typescript-eslint/parser": "^8.57.0",
+    "@vercel/webpack-asset-relocator-loader": "1.10.0",
+    "copy-webpack-plugin": "^14.0.0",
+    "css-loader": "^7.1.4",
+    "electron": "41.0.0",
+    "eslint": "^10.0.3",
+    "fork-ts-checker-webpack-plugin": "^9.1.0",
+    "node-loader": "^2.1.0",
+    "style-loader": "^4.0.0",
+    "ts-loader": "^9.5.4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3",
+    "prettier": "^3.5.3"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^3.0.41",
+    "@ai-sdk/react": "^3.0.118",
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.0",
+    "@mui/icons-material": "^7.3.9",
+    "@mui/material": "^7.3.9",
+    "@pixiv/three-vrm": "^3.5.0",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.5.0",
+    "@react-three/rapier": "^2.2.0",
+    "ai": "^6.0.116",
+    "dotenv": "^17.3.1",
+    "electron-squirrel-startup": "^1.0.1",
+    "hark": "^1.2.3",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "three": "^0.183.2",
+    "update-electron-app": "^3.1.2",
+    "wavesurfer.js": "^7.12.2"
+  }
+}

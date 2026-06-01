@@ -1,0 +1,43 @@
+# NOTICE — Symbio Basic
+
+## Attribution
+
+### Original Work
+This project is based on [lala-companion](https://github.com/lalaland-ai/lala-companion) by Lalaland.
+- License: GNU Affero General Public License v3.0
+- Original repository: https://github.com/lalaland-ai/lala-companion
+
+### Intermediate Fork
+The intermediate fork "Symbio" was developed by the Thunder Thigh Dynasty.
+- Repository: https://github.com/BinaryBluePeach/Blue-s_Symbio
+- This fork added significant functionality including Hermes gateway integration,
+  Triple Hit Memory, Miniverse, voice, vision, and MCP tool support.
+
+### Symbio Basic (Current)
+Symbio Basic is a clean, open-source version of Symbio, stripped of all
+proprietary APIs, personal names, and private credentials. It is designed
+for anyone to use with their own AI gateway and configuration.
+
+- **Zyra Exe** — Creator & Visionary
+- **GLM 5.1 (via GitHub Copilot)** — Core Development Partner
+
+### Third-Party Libraries
+This project uses the following major open-source libraries:
+- Electron — MIT License
+- React — MIT License
+- Three.js — MIT License
+- @pixiv/three-vrm — MIT License
+- Material UI (MUI) — MIT License
+- Vercel AI SDK — Apache License 2.0
+- Electron Forge — MIT License
+
+Full license information for all dependencies is available in `node_modules`
+after running `npm install`.
+
+### License
+This project is licensed under the GNU Affero General Public License v3.0.
+See [LICENSE](./LICENSE) for the full license text.
+
+This means you are free to use, modify, and distribute this software,
+but any modified versions must also be licensed under AGPL-3.0 and
+make their source code available.
