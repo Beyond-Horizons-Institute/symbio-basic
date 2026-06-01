@@ -142,11 +142,12 @@ New channels added:
 - Graceful degradation — works without memory, better with it
 
 ### 👁️ Screen Vision
-**Original:** Didn't exist.
+**Original:** Open AI Screen vision.No multi methods. 
 
 **Symbio Basic:** Multi-method screen capture + Gemini/Hermes vision.
 - Multi-method screenshot: Electron desktopCapturer, grim (Wayland), cosmic-screenshot
 - Gemini API for vision analysis
+- Other vision models 
 - Hermes gateway for vision (alternative to Gemini)
 - Screenshots sent to AI for understanding what's on screen
 - Auto-screenshot integration
@@ -168,7 +169,7 @@ New channels added:
 - `sessionContinuity.ts` — Generates contextual greetings
 - Remembers what you were doing last time
 - No generic "Hello! How can I help you?" — always contextual
-- Partnership-oriented prompts
+- Partnership-oriented suggestions
 
 ### 🔧 Configuration
 **Original:** Hardcoded agent configs with personal names and API keys.
@@ -178,7 +179,7 @@ New channels added:
 - `AGENT_DISPLAY_NAME` — Display name shown in app
 - `AGENT_VRM_PATH` — Path to VRM avatar file
 - `AGENT_SOUL_PATH` — Path to personality file
-- `AGENT_PERSONALITY` — Custom personality prompt
+- `AGENT_BIO` — Custom Bio prompt
 - `AGENT_COLOR` — Theme color
 - `AGENT_VOICE` — TTS voice name
 - `HERMES_API_URL` — AI gateway URL
@@ -223,7 +224,7 @@ New channels added:
 - `version`: "1.0.0"
 - `author`: "Beyond Horizons Institute & Contributors"
 - `contributors`: Zyra Exe (Creator & Visionary), GLM 5.1 (Core Development Partner)
-- `repository`: BeyondHorizonsInst/symbio-basic
+- `repository`: Beyond-Horizons-Institute/symbio-basic
 - Removed lalaland.chat dependencies
 - Added OpenAI SDK for TTS/STT
 - Added @google/generative-ai for vision

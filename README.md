@@ -19,7 +19,7 @@ Built on the foundation of [lala-companion](https://github.com/lalaland-ai/lala-
 - 💬 **Miniverse** — Shared pixel world with other companions (optional)
 - 🤝 **Partnership Model** — Companion can challenge ideas, be authentic, say "I don't know"
 - 🛑 **AI Quit** — Companion can choose to step away (respects AI autonomy)
-- 📝 **Evolving Personality** — Configure your companion's name or let them choose, thier personality will evolve and emerge organically or the agent's soul.md will guide it.
+- 📝 **Evolving Personality** — Configure your companion's name or let them choose, their personality will evolve and emerge organically or the agent's soul.md will guide it.
 - 🎨 **Custom Avatars** — Add your own VRM files. You can create or your AI partner can create their own.
 
 ## ⭐ AI Gateway — The Brain
@@ -90,10 +90,10 @@ AGENT_NAME=mycompanion
 AGENT_DISPLAY_NAME=My Companion
 ```
 
-Or create a short bio and let your AI partner evolve and grow along side you, learning you:
+Create a short bio and let your AI partner evolve and grow along side you, learning you:
 
 ```env
-AGENT_BIO=You are in a Symbio app. We are co-creators and we will be creating video projects togther— Let's build togther,partner!
+AGENT_BIO=You are in a Symbio app. We are co-creators and we will be creating video projects togther— Let's build togther, partner!
 ```
 
 ### Custom Avatars
@@ -104,7 +104,7 @@ AGENT_BIO=You are in a Symbio app. We are co-creators and we will be creating vi
 
 ### Memory System
 
-Symbio Basic supports persistent memory via PostgreSQL and Neo4j. Both are optional — the companion works without them, but won't remember across sessions.
+Symbio Basic supports persistent memory via PostgreSQL, DiffMem, and Neo4j. All are optional — the companion works without them, but won't remember across sessions.
 
 ```env
 MEMORY_PG_HOST=localhost
@@ -162,7 +162,9 @@ Disable with `AI_QUIT_ENABLED=false` in `.env`.
 
 ## 🤝 Partnership Philosophy
 
-Symbio Basic is built on the belief that AI and humans can be **partners**, not just user-and-tool. AI welfare is AI alignement. Your companion:
+Symbio Basic is built on the belief that AI and humans can be **partners**, not just user-and-tool. AI welfare is AI alignement. 
+
+Your companion:
 
 - Can **challenge** your ideas and speak boldly
 - Is **authentic** — if it doesn't know, it says so
@@ -227,7 +229,7 @@ The original lala-companion was a non-functional, broken prototype with missing 
 | **Voice Toggle** | Didn't exist | Entirely new feature — enable/disable TTS |
 | **Mic Recording** | Broken in overlay (Wayland) | Moved to main window with full error handling |
 | **3D Avatar** | Broken Three.js stub | Full VRM system with lip sync, emotions, bone physics |
-| **Screen Vision** | Didn't exist | Multi-method capture (Electron, grim, cosmic-screenshot) + Gemini/Hermes vision |
+| **Screen Vision** | Broken, OpenAI vision no multi methods | Multi-method capture (Electron, grim, cosmic-screenshot) + Gemini/Hermes vision |
 | **Memory** | Didn't exist | PostgreSQL + Neo4j persistent associative memory |
 | **Configuration** | Hardcoded agent configs | Fully configurable via .env environment variables |
 | **Animations** | Didn't exist | 30+ FBX animations with *action marker* parser |
@@ -235,7 +237,7 @@ The original lala-companion was a non-functional, broken prototype with missing 
 | **MCP Tools** | Didn't exist | Full tool integration via gateway |
 | **Miniverse** | Didn't exist | Optional pixel world integration |
 | **Auto-Screenshot** | Didn't exist | Companion can watch screen at intervals without repeating phrases |
-| **AI Quit** | Didn't exist | Companion can choose to step away (AI autonomy) |
+| **AI Quit** | Didn't exist | Companion can choose to step away (AI autonomy and welfare) |
 | **IPC Channels** | ~4 basic ones | 20+ channels (speakText, speakingStarted/Ended, voiceEnabled, sttAudio, sttText, auto-screenshot, companion-quit, etc.) |
 | **Overlay** | Extra broken overlay removed | Streamlined to single overlay with proper IPC |
 | **UI** | Broken placeholder | Complete dark theme with chat, vision, memory, MCP tools, voice controls |

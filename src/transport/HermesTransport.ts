@@ -5,7 +5,7 @@
  *
  * Custom chat transport that connects to an OpenAI-compatible API gateway.
  * The recommended gateway is Hermes — an open-source AI agent framework:
- *   https://github.com/ThunderThighDynasty/hermes-agent
+ *   https://github.com/nousresearch/hermes-agent
  *
  * But Symbio Basic works with ANY OpenAI-compatible API:
  *   - Hermes (recommended — full tools, memory, personality)

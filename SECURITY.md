@@ -16,7 +16,7 @@ For maximum privacy, consider running a local AI model instead of cloud services
 - [Ollama](https://ollama.ai) with OpenAI compatibility
 - [LM Studio](https://lmstudio.ai)
 - [vLLM](https://github.com/vllm-project/vllm)
-- [Hermes](https://github.com/ThunderThighDynasty/hermes-agent) with local models
+- [Hermes] (https://github.com/nousresearch/hermes-agent) with local models
 
 ## Reporting a Vulnerability
 
