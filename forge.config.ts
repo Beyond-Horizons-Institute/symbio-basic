@@ -16,6 +16,7 @@ dotenv.config();
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    executableName: "symbio-basic",
   },
   rebuildConfig: {},
   makers: [
@@ -64,8 +65,8 @@ const config: ForgeConfig = {
       name: "@electron-forge/publisher-github",
       config: {
         repository: {
-          owner: "lalaland-ai",
-          name: "lala-companion",
+          owner: "Beyond-Horizons-Institute",
+          name: "symbio-basic",
         },
         prerelease: true,
       },
