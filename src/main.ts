@@ -1282,7 +1282,7 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
   // Switches the active agent — updates VRM, API key, and personality.
   // Sends the new agent info to both windows so they can update.
   ipcMain.handle("switch-agent", async (_event, agentName: string) => {
-    const agentConfig = AGENTS[agentName];
+    const agentConfig = COMPANIONS[agentName];
     if (!agentConfig) {
       return { error: `Unknown agent: ${agentName}` };
     }

@@ -17,7 +17,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import Scene from "../Scene";
 import { HermesTransport, updateDynamicAgent } from "../transport/HermesTransport";
-import { config, AGENTS } from "../config";
+import { config, COMPANIONS } from "../config";
 import { parseAutoAnimation, type AnimationTarget } from "../utils/autoAnimate";
 import { shouldTriggerVision } from "../utils/autoVision";
 import { loadSessionState, markNewSession, generateGreetingPrompt, updateSessionState } from "../utils/sessionContinuity";
@@ -89,7 +89,7 @@ const Overlay = () => {
       setCurrentVrmUrl(agent.vrmPath);
       setCurrentAgentName(agent.name);
       // Update the dynamic agent state so new chat requests use the right agent
-      const agentConfig = AGENTS[agent.name];
+      const agentConfig = COMPANIONS[agent.name];
       if (agentConfig) {
         updateDynamicAgent(agent.name, agentConfig.hermesApiKey, agentConfig.hermesApiUrl);
       }
