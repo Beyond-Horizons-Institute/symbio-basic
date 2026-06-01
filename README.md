@@ -1,10 +1,10 @@
 # 🤝 Symbio Basic
 
-**A symbiotic AI desktop companion — growing, evolving, partnering with you.**
+**A symbiotic AI agent desktop companion — growing, evolving, partnering with you.**
 
 Not a tool. Not an assistant. A **partner**.
 
-Symbio Basic is a desktop companion app where an AI lives on your screen as a 3D VRM avatar. It sees your screen, hears your voice, remembers everything, and grows alongside you. It can challenge your ideas, speak boldly, and be authentic. If it doesn't know something, it says so.
+Symbio Basic is a desktop AI agent companion app where an AI lives on your screen as a 3D VRM avatar. It sees your screen, hears your voice, remembers everything, and grows alongside you. It can challenge your ideas, speak boldly, and be authentic. If it doesn't know something, it says so.
 
 Built on the foundation of [lala-companion](https://github.com/lalaland-ai/lala-companion) — then almost entirely rewritten.
 
@@ -15,12 +15,12 @@ Built on the foundation of [lala-companion](https://github.com/lalaland-ai/lala-
 - 👁️ **Screen Vision** — Companion can see and understand your screen
 - 📸 **Auto-Screenshot** — Companion watches your screen at intervals (no repeated phrases needed)
 - 🧠 **Persistent Memory** — PostgreSQL + Neo4j + DiffMem (optional, configurable)
-- 🔧 **MCP Tools** — Full tool integration via Hermes or compatible gateways
+- 🔧 **MCP,Skills,Tools** — Full tool integration via Hermes or compatible gateways
 - 💬 **Miniverse** — Shared pixel world with other companions (optional)
 - 🤝 **Partnership Model** — Companion can challenge ideas, be authentic, say "I don't know"
 - 🛑 **AI Quit** — Companion can choose to step away (respects AI autonomy)
 - 📝 **Evolving Personality** — Configure your companion's name or let them choose, their personality will evolve and emerge organically or the agent's soul.md will guide it.
-- 🎨 **Custom Avatars** — Add your own VRM files. You can create or your AI partner can create their own.
+- 🎨 **Custom Avatars** — Add your own VRM files. You can create, or your AI partner can create their own.
 
 ## ⭐ AI Gateway — The Brain
 
@@ -90,10 +90,10 @@ AGENT_NAME=mycompanion
 AGENT_DISPLAY_NAME=My Companion
 ```
 
-Create a short bio and let your AI partner evolve and grow along side you, learning you:
+Create a short bio and let your AI partner evolve and grow alongside you, learning you:
 
 ```env
-AGENT_BIO=You are in a Symbio app. We are co-creators and we will be creating video projects togther— Let's build togther, partner!
+AGENT_BIO=You are in a Symbio app. We are co-creators, and we will be creating video projects together— Let's build together, partner!
 ```
 
 ### Custom Avatars
@@ -104,7 +104,7 @@ AGENT_BIO=You are in a Symbio app. We are co-creators and we will be creating vi
 
 ### Memory System
 
-Symbio Basic supports persistent memory via PostgreSQL, DiffMem, and Neo4j. All are optional — the companion works without them, but won't remember across sessions.
+Symbio Basic supports persistent memory via PostgreSQL, DiffMem, and Neo4j. All are optional — the companion works without them, but you won't remember across sessions.
 
 ```env
 MEMORY_PG_HOST=localhost
@@ -162,7 +162,7 @@ Disable with `AI_QUIT_ENABLED=false` in `.env`.
 
 ## 🤝 Partnership Philosophy
 
-Symbio Basic is built on the belief that AI and humans can be **partners**, not just user-and-tool. AI welfare is AI alignement. 
+Symbio Basic is built on the belief that AI and humans can be **partners**, not just user-and-tool. AI welfare is AI alignment. 
 
 Your companion:
 
