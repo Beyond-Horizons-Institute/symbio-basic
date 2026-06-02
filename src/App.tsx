@@ -41,6 +41,7 @@ import { config, COMPANIONS } from "./config";
 import { symbioColors } from "./theme";
 import type { MCPToolCategory } from "./transport/MCPToolsClient";
 import infinityLogo from "../assets/images/infinity.png";
+import SetupWizard from "./SetupWizard";
 
 const App = () => {
   const [isOverlayOpen, setIsOverlayOpen] = useState(false);
@@ -59,6 +60,46 @@ const App = () => {
   const [mcpToolLoading, setMcpToolLoading] = useState(false);
   const [isAutoScreenshotEnabled, setIsAutoScreenshotEnabled] = useState(false);
   const [companionQuitMessage, setCompanionQuitMessage] = useState<string | null>(null);
+
+  // ── Symbio: First-Run Setup Wizard ────────────────────────────────
+  // Check if the app needs setup (no API key configured).
+  // If so, show the setup wizard instead of the main UI.
+  const [needsSetup, setNeedsSetup] = useState<boolean | null>(null); // null = checking
+
+  useEffect(() => {
+    window.symbioAPI?.needsSetup?.().then((needed: boolean) => {
+      setNeedsSetup(needed);
+    }).catch(() => {
+      // If the check fails, assume no setup needed (existing config)
+      setNeedsSetup(false);
+    });
+  }, []);
+
+  const handleSetupComplete = () => {
+    setNeedsSetup(false);
+  };
+
+  // While checking, show a loading screen
+  if (needsSetup === null) {
+    return (
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <Box sx={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", bgcolor: "#0a0a0a" }}>
+          <Typography color="#b0bec5">Loading Symbio...</Typography>
+        </Box>
+      </ThemeProvider>
+    );
+  }
+
+  // If setup is needed, show the wizard
+  if (needsSetup) {
+    return (
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <SetupWizard onComplete={handleSetupComplete} />
+      </ThemeProvider>
+    );
+  }
 
   // ── Symbio: Hot mic recording (moved from overlay to main window) ──
   // The overlay has setFocusable(false) which blocks getUserMedia on Linux/Wayland.

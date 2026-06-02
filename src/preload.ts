@@ -257,6 +257,13 @@ contextBridge.exposeInMainWorld("symbioAPI", {
   ttsPlaybackEnded: () => {
     ipcRenderer.send("tts-playback-ended", "ended");
   },
+
+  // ── Setup Wizard ────────────────────────────────────────────────
+  // Check if the app needs first-run setup (no API key configured)
+  needsSetup: () => ipcRenderer.invoke("needs-setup"),
+  // Save configuration from the setup wizard
+  saveSetupConfig: (config: Record<string, unknown>) =>
+    ipcRenderer.invoke("save-setup-config", config),
 });
 
 // ── Legacy compatibility ─────────────────────────────────────────

@@ -156,6 +156,9 @@ interface SymbioAPI {
   setVoiceEnabled: (enabled: boolean) => void;
   onVoiceToggled: (callback: (enabled: boolean) => void) => () => void;
   debugOverlayDevTools: () => void;
+  // Setup Wizard
+  needsSetup: () => Promise<boolean>;
+  saveSetupConfig: (config: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
 }
 
 interface Window {
