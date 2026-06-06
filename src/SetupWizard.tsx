@@ -22,7 +22,11 @@ import {
   StepLabel,
   Switch,
   FormControlLabel,
-  Fade,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  FormHelperText,
   InputAdornment,
   IconButton,
   Chip,
@@ -41,18 +45,28 @@ import { symbioColors } from "./theme";
 interface SetupConfig {
   hermesApiUrl: string;
   hermesApiKey: string;
+  llmModel: string;
   agentName: string;
   agentDisplayName: string;
   agentBio: string;
   agentColor: string;
   openaiApiKey: string;
+  ttsModel: string;
+  ttsVoice: string;
+  ttsInstructions: string;
   geminiApiKey: string;
+  visionModel: string;
+  sttModel: string;
   enableMemory: boolean;
   memoryPgHost: string;
   memoryPgPort: string;
   memoryPgDb: string;
   memoryPgUser: string;
   memoryPgPassword: string;
+  enableNeo4j: boolean;
+  memoryNeo4jUri: string;
+  memoryNeo4jUser: string;
+  memoryNeo4jPassword: string;
 }
 
 const STEPS = [
@@ -66,11 +80,21 @@ const STEPS = [
 
 const GATEWAY_OPTIONS = [
   { label: "Hermes (Recommended)", value: "http://localhost:8642", description: "Full tools, memory, personality" },
-  { label: "OpenAI", value: "https://api.openai.com", description: "Direct OpenAI API" },
+  { label: "OpenRouter", value: "https://openrouter.ai/api/v1", description: "Access 200+ models with one key" },
+  { label: "OpenAI", value: "https://api.openai.com/v1", description: "Direct OpenAI API" },
   { label: "Ollama (Local)", value: "http://localhost:11434", description: "Run models locally" },
   { label: "LM Studio (Local)", value: "http://localhost:1234", description: "Run models locally" },
   { label: "Custom", value: "custom", description: "Enter your own URL" },
 ];
+
+const MODEL_OPTIONS: Record<string, { label: string; models: string[] }> = {
+  "http://localhost:8642": { label: "Hermes", models: ["(Hermes selects automatically)"] },
+  "https://openrouter.ai/api/v1": { label: "OpenRouter", models: ["anthropic/claude-sonnet-4", "openai/gpt-4o", "google/gemini-2.5-flash", "meta-llama/llama-4-maverick", "deepseek/deepseek-r1"] },
+  "https://api.openai.com/v1": { label: "OpenAI", models: ["openai/gpt-5.5", "openai/gpt-4.1", "openai/gpt-5"] },
+  "http://localhost:11434": { label: "Ollama", models: ["(Enter your local model name)"] },
+  "http://localhost:1234": { label: "LM Studio", models: ["(Enter your loaded model name)"] },
+  "custom": { label: "Custom", models: ["(Enter your model name)"] },
+};
 
 const COMPANION_COLORS = [
   { label: "Teal", value: "#00bcd4" },
@@ -93,18 +117,28 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
   const [config, setConfig] = useState<SetupConfig>({
     hermesApiUrl: "http://localhost:8642",
     hermesApiKey: "",
+    llmModel: "",
     agentName: "companion",
     agentDisplayName: "Companion",
     agentBio: "",
     agentColor: "#00bcd4",
     openaiApiKey: "",
+    ttsModel: "gpt-4o-mini-tts",
+    ttsVoice: "fable",
+    ttsInstructions: "",
     geminiApiKey: "",
+    visionModel: "gemini-2.0-flash",
+    sttModel: "whisper-1",
     enableMemory: false,
     memoryPgHost: "localhost",
     memoryPgPort: "5432",
     memoryPgDb: "symbio",
     memoryPgUser: "symbio",
     memoryPgPassword: "",
+    enableNeo4j: false,
+    memoryNeo4jUri: "bolt://localhost:7687",
+    memoryNeo4jUser: "neo4j",
+    memoryNeo4jPassword: "",
   });
 
   const updateConfig = (field: keyof SetupConfig, value: string | boolean) => {
@@ -119,6 +153,8 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
     } else {
       updateConfig("hermesApiUrl", "");
     }
+    // Clear model when switching gateways (different gateways have different models)
+    updateConfig("llmModel", "");
   };
 
   const canProceed = (): boolean => {
@@ -170,7 +206,7 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
       // ── Step 0: Welcome ──────────────────────────────────────────
       case 0:
         return (
-          <Fade in>
+          <Box>
             <Stack spacing={3} alignItems="center" textAlign="center">
               <Box
                 sx={{
@@ -213,13 +249,13 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                 Let's set up your companion in a few quick steps.
               </Typography>
             </Stack>
-          </Fade>
+          </Box>
         );
 
       // ── Step 1: AI Gateway ────────────────────────────────────────
       case 1:
         return (
-          <Fade in>
+          <Box>
             <Stack spacing={3}>
               <Stack direction="row" spacing={1.5} alignItems="center">
                 <KeyIcon sx={{ color: symbioColors.teal.glow, fontSize: 28 }} />
@@ -290,22 +326,70 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                 }}
               />
 
+              {/* Model selection — only shown for non-Hermes gateways */}
+              {gatewayPreset !== "http://localhost:8642" && (
+                <Stack spacing={1}>
+                  <Typography variant="caption" color={symbioColors.silver.dark} textTransform="uppercase" fontWeight={600}>
+                    Model (Optional)
+                  </Typography>
+                  <TextField
+                    label="LLM Model"
+                    value={config.llmModel}
+                    onChange={(e) => updateConfig("llmModel", e.target.value)}
+                    placeholder={
+                      MODEL_OPTIONS[gatewayPreset]?.models[0] || "e.g. gpt-4o"
+                    }
+                    fullWidth
+                    sx={fieldStyle}
+                    helperText={
+                      <Typography variant="caption" color={symbioColors.silver.dark}>
+                        {gatewayPreset === "http://localhost:8642"
+                          ? "Hermes selects the best model automatically"
+                          : "The model your companion will use for conversations"
+                        }
+                      </Typography>
+                    }
+                  />
+                  {MODEL_OPTIONS[gatewayPreset] && gatewayPreset !== "http://localhost:8642" && gatewayPreset !== "custom" && (
+                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                      {MODEL_OPTIONS[gatewayPreset].models.filter(m => !m.startsWith("(")).map((model) => (
+                        <Chip
+                          key={model}
+                          label={model}
+                          size="small"
+                          variant={config.llmModel === model ? "filled" : "outlined"}
+                          onClick={() => updateConfig("llmModel", model)}
+                          sx={{
+                            borderColor: config.llmModel === model ? symbioColors.teal.main : symbioColors.dark.border,
+                            bgcolor: config.llmModel === model ? `${symbioColors.teal.main}20` : "transparent",
+                            color: config.llmModel === model ? symbioColors.teal.glow : symbioColors.silver.light,
+                            fontSize: "0.7rem",
+                          }}
+                        />
+                      ))}
+                    </Stack>
+                  )}
+                </Stack>
+              )}
+
               <Paper sx={{ p: 2, bgcolor: symbioColors.dark.card, border: `1px solid ${symbioColors.dark.border}` }}>
                 <Typography variant="caption" color={symbioColors.silver.dark}>
                   💡 Don't have an API key? You can use a local model with{" "}
                   <a href="https://ollama.ai" target="_blank" rel="noopener" style={{ color: symbioColors.teal.glow }}>Ollama</a> or{" "}
                   <a href="https://lmstudio.ai" target="_blank" rel="noopener" style={{ color: symbioColors.teal.glow }}>LM Studio</a>{" "}
-                  — no API key needed for local models!
+                  — no API key needed for local models! Or try{" "}
+                  <a href="https://openrouter.ai" target="_blank" rel="noopener" style={{ color: symbioColors.teal.glow }}>OpenRouter</a>{" "}
+                  for 200+ models with one key.
                 </Typography>
               </Paper>
             </Stack>
-          </Fade>
+          </Box>
         );
 
       // ── Step 2: Companion ────────────────────────────────────────
       case 2:
         return (
-          <Fade in>
+          <Box>
             <Stack spacing={3}>
               <Stack direction="row" spacing={1.5} alignItems="center">
                 <PersonIcon sx={{ color: symbioColors.teal.glow, fontSize: 28 }} />
@@ -336,7 +420,7 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                 label="Short Bio (Optional)"
                 value={config.agentBio}
                 onChange={(e) => updateConfig("agentBio", e.target.value)}
-                placeholder="e.g. You are a creative co-creator who loves brainstorming and building things together."
+                placeholder="e.g. You are in the Symbio Desktop app.I hope we can be co-creators who will brainstorm and build things together."
                 fullWidth
                 multiline
                 rows={3}
@@ -373,13 +457,13 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                 </Stack>
               </Stack>
             </Stack>
-          </Fade>
+          </Box>
         );
 
       // ── Step 3: Voice & Vision ───────────────────────────────────
       case 3:
         return (
-          <Fade in>
+          <Box>
             <Stack spacing={3}>
               <Stack direction="row" spacing={1.5} alignItems="center">
                 <VisibilityIcon sx={{ color: symbioColors.teal.glow, fontSize: 28 }} />
@@ -388,7 +472,7 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                 </Typography>
               </Stack>
               <Typography variant="body2" color={symbioColors.silver.light}>
-                Add voice and screen vision to your companion. Both are optional —
+                Add voice and screen vision to your companion if needed. Both are optional —
                 your companion works with just the AI gateway.
               </Typography>
 
@@ -409,6 +493,65 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                   type="password"
                   sx={fieldStyle}
                 />
+                <Stack direction="row" spacing={2} sx={{ mt: 2 }}>
+                  <TextField
+                    label="TTS Model"
+                    value={config.ttsModel}
+                    onChange={(e) => updateConfig("ttsModel", e.target.value)}
+                    placeholder="gpt-4o-mini-tts"
+                    fullWidth
+                    sx={fieldStyle}
+                    helperText="OpenAI TTS model name"
+                  />
+                  <FormControl fullWidth sx={fieldStyle}>
+                    <InputLabel sx={{ color: symbioColors.silver.light }}>Voice</InputLabel>
+                    <Select
+                      value={config.ttsVoice}
+                      onChange={(e) => updateConfig("ttsVoice", e.target.value)}
+                      label="Voice"
+                      sx={{
+                        color: "white",
+                        "& .MuiSelect-icon": { color: symbioColors.silver.light },
+                        "& .MuiOutlinedInput-notchedOutline": { borderColor: symbioColors.dark.border },
+                        "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: symbioColors.teal.main },
+                        "&.Mui-focused .MuiOutlinedInput-notchedOutline": { borderColor: symbioColors.teal.main },
+                      }}
+                      MenuProps={{
+                        PaperProps: { sx: { bgcolor: symbioColors.dark.card } },
+                      }}
+                    >
+                      <MenuItem value="alloy">Alloy — Neutral, balanced</MenuItem>
+                      <MenuItem value="echo">Echo — Warm, conversational</MenuItem>
+                      <MenuItem value="fable">Fable — Expressive, storytelling</MenuItem>
+                      <MenuItem value="onyx">Onyx — Deep, authoritative</MenuItem>
+                      <MenuItem value="nova">Nova — Friendly, upbeat</MenuItem>
+                      <MenuItem value="shimmer">Shimmer — Clear, gentle</MenuItem>
+                    </Select>
+                    <FormHelperText sx={{ color: symbioColors.silver.dark }}>
+                      Choose a voice personality for your companion
+                    </FormHelperText>
+                  </FormControl>
+                </Stack>
+                <TextField
+                  label="Voice Instructions (optional)"
+                  value={config.ttsInstructions}
+                  onChange={(e) => updateConfig("ttsInstructions", e.target.value)}
+                  placeholder="e.g. Speak in a warm, friendly tone"
+                  fullWidth
+                  multiline
+                  rows={2}
+                  sx={{ mt: 2, ...fieldStyle }}
+                  helperText="Custom instructions for voice style and tone (gpt-4o-mini-tts only)"
+                />
+                <TextField
+                  label="STT Model"
+                  value={config.sttModel}
+                  onChange={(e) => updateConfig("sttModel", e.target.value)}
+                  placeholder="whisper-1"
+                  fullWidth
+                  sx={{ mt: 2, ...fieldStyle }}
+                  helperText="OpenAI Whisper model for speech-to-text"
+                />
               </Paper>
 
               <Paper sx={{ p: 2.5, bgcolor: symbioColors.dark.card, border: `1px solid ${symbioColors.dark.border}` }}>
@@ -416,7 +559,7 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                   👁️ Screen Vision (Gemini API)
                 </Typography>
                 <Typography variant="body2" color={symbioColors.silver.light} sx={{ mb: 1.5 }}>
-                  Enables your companion to see and understand your screen.
+                  Enables your companion to see and understand your screen if not using a multi-model.
                   Great for co-creating, gaming, and research together.
                 </Typography>
                 <TextField
@@ -428,19 +571,44 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                   type="password"
                   sx={fieldStyle}
                 />
+                <FormControl fullWidth sx={{ mt: 2, ...fieldStyle }}>
+                  <InputLabel sx={{ color: symbioColors.silver.light }}>Vision Model</InputLabel>
+                  <Select
+                    value={config.visionModel}
+                    onChange={(e) => updateConfig("visionModel", e.target.value)}
+                    label="Vision Model"
+                    sx={{
+                      color: "white",
+                      "& .MuiSelect-icon": { color: symbioColors.silver.light },
+                      "& .MuiOutlinedInput-notchedOutline": { borderColor: symbioColors.dark.border },
+                      "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: symbioColors.teal.main },
+                      "&.Mui-focused .MuiOutlinedInput-notchedOutline": { borderColor: symbioColors.teal.main },
+                    }}
+                    MenuProps={{
+                      PaperProps: { sx: { bgcolor: symbioColors.dark.card } },
+                    }}
+                  >
+                    <MenuItem value="gemini-2.5-flash">Gemini 2.5 Flash (Recommended)</MenuItem>
+                    <MenuItem value="gemini-2.0-flash">Gemini 2.0 Flash</MenuItem>
+                    <MenuItem value="gemini-2.5-pro">Gemini 2.5 Pro (More capable, slower)</MenuItem>
+                  </Select>
+                  <FormHelperText sx={{ color: symbioColors.silver.dark }}>
+                    Gemini model for screen analysis
+                  </FormHelperText>
+                </FormControl>
               </Paper>
 
               <Typography variant="caption" color={symbioColors.silver.dark}>
                 You can add these later by editing the .env file in the app folder.
               </Typography>
             </Stack>
-          </Fade>
+          </Box>
         );
 
       // ── Step 4: Memory ────────────────────────────────────────────
       case 4:
         return (
-          <Fade in>
+          <Box>
             <Stack spacing={3}>
               <Stack direction="row" spacing={1.5} alignItems="center">
                 <StorageIcon sx={{ color: symbioColors.teal.glow, fontSize: 28 }} />
@@ -473,6 +641,9 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
 
               {config.enableMemory && (
                 <Stack spacing={2} sx={{ pl: 1, borderLeft: `2px solid ${symbioColors.teal.dark}` }}>
+                  <Typography variant="subtitle2" color={symbioColors.teal.glow}>
+                    🐘 PostgreSQL (Structured Memory)
+                  </Typography>
                   <TextField
                     label="PostgreSQL Host"
                     value={config.memoryPgHost}
@@ -512,17 +683,68 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                 </Stack>
               )}
 
+              {/* Neo4j — Knowledge Graph Memory */}
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={config.enableNeo4j}
+                    onChange={(e) => updateConfig("enableNeo4j", e.target.checked)}
+                    sx={{
+                      "& .MuiSwitch-switchBase.Mui-checked": { color: symbioColors.teal.main },
+                      "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": { bgcolor: symbioColors.teal.dark },
+                    }}
+                  />
+                }
+                label={
+                  <Typography variant="body2" color={symbioColors.silver.light}>
+                    🕸️ Enable Neo4j (Knowledge Graph Memory)
+                  </Typography>
+                }
+              />
+
+              <Typography variant="caption" color={symbioColors.silver.dark} sx={{ mt: -1 }}>
+                Neo4j adds associative memory — your companion connects ideas and recalls relationships.
+              </Typography>
+
+              {config.enableNeo4j && (
+                <Stack spacing={2} sx={{ pl: 1, borderLeft: `2px solid ${symbioColors.accent.main}40` }}>
+                  <TextField
+                    label="Neo4j URI"
+                    value={config.memoryNeo4jUri}
+                    onChange={(e) => updateConfig("memoryNeo4jUri", e.target.value)}
+                    placeholder="bolt://localhost:7687"
+                    fullWidth
+                    sx={fieldStyle}
+                  />
+                  <Stack direction="row" spacing={2}>
+                    <TextField
+                      label="Username"
+                      value={config.memoryNeo4jUser}
+                      onChange={(e) => updateConfig("memoryNeo4jUser", e.target.value)}
+                      sx={{ ...fieldStyle, flex: 1 }}
+                    />
+                    <TextField
+                      label="Password"
+                      value={config.memoryNeo4jPassword}
+                      onChange={(e) => updateConfig("memoryNeo4jPassword", e.target.value)}
+                      type="password"
+                      sx={{ ...fieldStyle, flex: 1 }}
+                    />
+                  </Stack>
+                </Stack>
+              )}
+
               <Typography variant="caption" color={symbioColors.silver.dark}>
                 You can set up memory later by editing the .env file.
               </Typography>
             </Stack>
-          </Fade>
+          </Box>
         );
 
       // ── Step 5: Launch! ───────────────────────────────────────────
       case 5:
         return (
-          <Fade in>
+          <Box>
             <Stack spacing={3} alignItems="center" textAlign="center">
               <Box
                 sx={{
@@ -550,12 +772,15 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                   Configuration Summary
                 </Typography>
                 <Stack spacing={0.5}>
-                  <SummaryRow label="Gateway" value={config.hermesApiUrl} />
+                  <SummaryRow label="Gateway" value={GATEWAY_OPTIONS.find(o => o.value === gatewayPreset)?.label || config.hermesApiUrl} />
+                  <SummaryRow label="URL" value={config.hermesApiUrl} />
+                  {config.llmModel && <SummaryRow label="Model" value={config.llmModel} />}
                   <SummaryRow label="Companion" value={config.agentDisplayName} />
                   {config.agentBio && <SummaryRow label="Bio" value={config.agentBio.length > 50 ? config.agentBio.slice(0, 50) + "..." : config.agentBio} />}
-                  <SummaryRow label="Voice" value={config.openaiApiKey ? "Enabled" : "Not configured"} />
-                  <SummaryRow label="Vision" value={config.geminiApiKey ? "Enabled" : "Not configured"} />
+                  <SummaryRow label="Voice" value={config.openaiApiKey ? `Enabled (${config.ttsVoice})` : "Not configured"} />
+                  <SummaryRow label="Vision" value={config.geminiApiKey ? `Enabled (${config.visionModel})` : "Not configured"} />
                   <SummaryRow label="Memory" value={config.enableMemory ? `PostgreSQL @ ${config.memoryPgHost}` : "Not configured"} />
+                  <SummaryRow label="Knowledge Graph" value={config.enableNeo4j ? `Neo4j @ ${config.memoryNeo4jUri}` : "Not configured"} />
                 </Stack>
               </Paper>
 
@@ -563,7 +788,7 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                 You can always change these settings later by editing the .env file.
               </Typography>
             </Stack>
-          </Fade>
+          </Box>
         );
 
       default:
@@ -618,7 +843,19 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
           </Stepper>
 
           {/* Step Content */}
-          <Box sx={{ minHeight: 300, display: "flex", alignItems: "flex-start" }}>
+          <Box
+            key={activeStep}
+            sx={{
+              minHeight: 300,
+              display: "flex",
+              alignItems: "flex-start",
+              animation: "symbioFadeIn 0.3s ease-in-out",
+              "@keyframes symbioFadeIn": {
+                from: { opacity: 0, transform: "translateY(8px)" },
+                to: { opacity: 1, transform: "translateY(0)" },
+              },
+            }}
+          >
             {renderStepContent()}
           </Box>
 

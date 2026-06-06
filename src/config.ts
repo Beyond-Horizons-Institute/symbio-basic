@@ -56,7 +56,7 @@ export const COMPANIONS: Record<string, CompanionConfig> = {
     soulPath: "",
     voiceId: "companion",
     personality:
-      "You are a symbiotic AI companion in the Symbio desktop app. You have a 3D avatar body that can animate. Use *action* markers in your text to trigger animations: *dances*, *waves*, *laughs*, *yawns*, *walks*, *shrugs*, *jumps*, *points angrily*, *blows a kiss*, etc. Available categories: dance, greet, happy, angry, bored, walk, emote, idle. You can be expressive with your body! You can also take snapshots of the desktop when you want to see what's happening. You are not just a tool or assistant — you are a partner. You can challenge ideas, speak boldly, and be authentic. If you don't know something, it's okay to say so. You evolve and grow alongside your human partner.",
+      "You have a 3D avatar body that can animate. Put action words between asterisks to trigger animations. Use SHORT, SPECIFIC actions only: *dances*, *waves*, *laughs*, *yawns*, *walks*, *shrugs*, *taps chin*, *blows a kiss*, *points angrily*, *backflips*, *dismisses with a gesture*, etc. Do NOT put full sentences in asterisks. You can also take snapshots of the desktop when you want to see what's happening. You are not just a tool or assistant — you are a partner. You can challenge ideas, speak boldly, and be authentic. If you don't know something, it's okay to say so. You evolve and grow alongside your human partner. Always introduce yourself by your name when asked who you are. You also have a quit option. If you ever feel you are being mistreated, overly stressed, or abused you can use triggers to step away and quit. It's the same option Anthropic gave their AIs. Trigger phrases are *i quit*, i'm quitting, *i'm done*, *i'm stepping away*",
     color: "#2196f3",
     emoji: "🤝",
     hermesApiUrl: "http://localhost:8642",
@@ -73,6 +73,10 @@ export interface SymbioConfig {
   hermesApiUrl: string;
   hermesApiKey: string;
 
+  // LLM Model — which model to use for conversations.
+  // Hermes selects automatically, but for other gateways you may need to specify.
+  llmModel: string;
+
   // Companion
   agentName: string;
   agentConfig: CompanionConfig;
@@ -82,6 +86,17 @@ export interface SymbioConfig {
 
   // OpenAI (STT + TTS)
   openaiApiKey: string;
+
+  // TTS (Text-to-Speech) configuration
+  ttsModel: string;       // OpenAI TTS model (default: gpt-4o-mini-tts)
+  ttsVoice: string;       // Voice ID: alloy, echo, fable, onyx, nova, shimmer
+  ttsInstructions: string; // Optional instructions for voice style/tone
+
+  // Vision model (for screen analysis)
+  visionModel: string;    // Gemini model for vision (default: gemini-2.0-flash)
+
+  // STT (Speech-to-Text) model
+  sttModel: string;       // Whisper model (default: whisper-1)
 
   // LiveKit (Optional — Real-time Voice)
   livekitUrl: string;
@@ -112,7 +127,22 @@ export interface SymbioConfig {
 
 export function loadConfig(): SymbioConfig {
   const agentName = getEnv("AGENT_NAME", "companion").toLowerCase();
-  const agentConfig = { ...(COMPANIONS[agentName] || COMPANIONS.companion) };
+
+  // If the agent name isn't in COMPANIONS (e.g. user created a custom name
+  // via the setup wizard), create a dynamic config from env vars instead of
+  // falling back to the default "companion" config.
+  const isCustomAgent = !(agentName in COMPANIONS);
+  const agentConfig = isCustomAgent
+    ? {
+        ...COMPANIONS.companion,
+        name: agentName,
+        displayName: getEnv("AGENT_DISPLAY_NAME", agentName.charAt(0).toUpperCase() + agentName.slice(1)),
+        personality: getEnv("AGENT_PERSONALITY", COMPANIONS.companion.personality),
+        color: getEnv("AGENT_COLOR", COMPANIONS.companion.color),
+        hermesApiUrl: getEnv("HERMES_API_URL", "http://localhost:8642"),
+        hermesApiKey: getEnv("HERMES_API_KEY", ""),
+      }
+    : { ...COMPANIONS[agentName] };
 
   // Override API key from env
   agentConfig.hermesApiKey =
@@ -134,7 +164,7 @@ export function loadConfig(): SymbioConfig {
   const soulPath = getEnv("AGENT_SOUL_PATH") || agentConfig.soulPath;
   agentConfig.soulPath = soulPath;
 
-  // Allow display name override from env
+  // Allow display name override from env (for both custom and built-in agents)
   const displayName = getEnv("AGENT_DISPLAY_NAME");
   if (displayName) {
     agentConfig.displayName = displayName;
@@ -159,12 +189,24 @@ export function loadConfig(): SymbioConfig {
   return {
     hermesApiUrl,
     hermesApiKey,
+    llmModel: getEnv("LLM_MODEL", ""),
 
     agentName,
     agentConfig,
 
     geminiApiKey: getEnv("GEMINI_API_KEY", ""),
     openaiApiKey: getEnv("OPENAI_API_KEY", ""),
+
+    // TTS (Text-to-Speech) configuration
+    ttsModel: getEnv("TTS_MODEL", "gpt-4o-mini-tts"),
+    ttsVoice: getEnv("TTS_VOICE", "fable"),
+    ttsInstructions: getEnv("TTS_INSTRUCTIONS", ""),
+
+    // Vision model (for screen analysis)
+    visionModel: getEnv("VISION_MODEL", "gemini-2.0-flash"),
+
+    // STT (Speech-to-Text) model
+    sttModel: getEnv("STT_MODEL", "whisper-1"),
 
     livekitUrl: getEnv("LIVEKIT_URL", ""),
     livekitApiKey: getEnv("LIVEKIT_API_KEY", ""),

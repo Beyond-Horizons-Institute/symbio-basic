@@ -2,7 +2,7 @@ import type { Configuration } from "webpack";
 import CopyWebpackPlugin from "copy-webpack-plugin";
 
 import { rules } from "./webpack.rules";
-import { plugins } from "./webpack.plugins";
+import { rendererPlugins } from "./webpack.plugins";
 
 const rendererRules = rules.filter(
   (rule) =>
@@ -33,7 +33,7 @@ export const rendererConfig: Configuration = {
     rules: rendererRules,
   },
   plugins: [
-    ...plugins,
+    ...rendererPlugins,
     new CopyWebpackPlugin({
       patterns: [
         {

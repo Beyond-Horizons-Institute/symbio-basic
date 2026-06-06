@@ -118,6 +118,7 @@ const ACTION_MAP: Record<string, AnimationTarget> = {
   "dramatic pose": { category: "emote", specific: "dramatic-pose" },
   "poses dramatically": { category: "emote", specific: "dramatic-pose" },
   "strikes a pose": { category: "emote", specific: "dramatic-pose" },
+  "strikes a dramatic pose": { category: "emote", specific: "dramatic-pose" },
   dismisses: { category: "emote", specific: "dismissing-gesture" },
   "dismissing gesture": { category: "emote", specific: "dismissing-gesture" },
   "waves dismissively": { category: "emote", specific: "dismissing-gesture" },
@@ -130,11 +131,16 @@ const ACTION_REGEX = /\*([^*]+)\*/g;
  * Parse companion response text for action markers and return
  * ALL matching animation targets in order, or empty array if no match.
  *
+ * Only matches EXACT action phrases from the ACTION_MAP.
+ * This prevents false triggers like *I think we should dance* matching "dance"
+ * when the AI didn't intend it as an action.
+ *
  * Examples:
  *   "Hey! *waves* How are you?" → [{ category: "greet" }]
  *   "*taps chin* Interesting..." → [{ category: "bored", specific: "thinking-taps-chin" }]
  *   "*waves* Hey! *dances*" → [{ category: "greet" }, { category: "dance" }]
  *   "Just thinking..." → [] (no action markers)
+ *   "*I think we should dance*" → [] (not an exact action phrase)
  */
 export function parseAutoAnimation(text: string): AnimationTarget[] {
   const matches = text.matchAll(ACTION_REGEX);
@@ -144,27 +150,18 @@ export function parseAutoAnimation(text: string): AnimationTarget[] {
   for (const match of matches) {
     const action = match[1].toLowerCase().trim();
 
-    // Check exact match first
+    // Only match EXACT action phrases — no substring matching.
+    // This prevents false triggers like "I think we should dance"
+    // matching "dance" when the AI didn't intend it as an action.
     if (ACTION_MAP[action]) {
       const key = `${ACTION_MAP[action].category}:${ACTION_MAP[action].specific ?? ""}`;
       if (!seen.has(key)) {
         seen.add(key);
         results.push(ACTION_MAP[action]);
       }
-      continue;
     }
-
-    // Check if any key is contained in the action phrase
-    for (const [key, target] of Object.entries(ACTION_MAP)) {
-      if (action.includes(key)) {
-        const dedupeKey = `${target.category}:${target.specific ?? ""}`;
-        if (!seen.has(dedupeKey)) {
-          seen.add(dedupeKey);
-          results.push(target);
-        }
-        break; // only one match per action marker
-      }
-    }
+    // If the exact phrase isn't in the map, skip it.
+    // The AI should use specific action markers like *dances* or *waves*.
   }
 
   return results;

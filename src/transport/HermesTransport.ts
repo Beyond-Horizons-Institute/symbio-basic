@@ -91,15 +91,27 @@ export class HermesTransport extends DefaultChatTransport<UIMessage> {
     const apiKey = getDynamicApiKey();
     const apiUrl = getDynamicApiUrl();
 
+    // If LLM_MODEL is set (e.g. for OpenRouter, OpenAI, Ollama), use it.
+    // Otherwise, use the agent name (Hermes routes by agent name).
+    const modelName = config.llmModel || agentName;
+
+    // Build the chat completions URL.
+    // Some gateways (OpenRouter, OpenAI) already include /v1 in their base URL,
+    // while others (Hermes, Ollama, LM Studio) expect /v1 to be appended.
+    // We normalize by removing a trailing /v1 if present, then always append /v1/chat/completions.
+    const normalizedUrl = apiUrl.replace(/\/v1\/?$/, '');
+    const chatUrl = `${normalizedUrl}/v1/chat/completions`;
+
     super({
-      api: `${apiUrl}/v1/chat/completions`,
+      api: chatUrl,
       headers: apiKey
         ? { Authorization: `Bearer ${apiKey}` }
         : undefined,
       body: {
-        // The "model" field tells Hermes which agent to route to.
-        // We use the dynamic agent name so switching works.
-        model: agentName,
+        // The "model" field tells the gateway which model/agent to use.
+        // For Hermes: the agent name routes to the correct agent.
+        // For other gateways: LLM_MODEL specifies the model (e.g. gpt-4o).
+        model: modelName,
         extra: {
           agent: agentName,
           source: "symbio",
@@ -130,8 +142,10 @@ export async function callHermes(
   const apiUrl = getDynamicApiUrl();
 
   try {
+    // Normalize URL to avoid double /v1 (OpenRouter already has /v1)
+    const normalizedUrl = apiUrl.replace(/\/v1\/?$/, '');
     const response = await fetch(
-      `${apiUrl}/v1/chat/completions`,
+      `${normalizedUrl}/v1/chat/completions`,
       {
         method: "POST",
         headers: {
@@ -155,11 +169,17 @@ export async function callHermes(
     );
 
     if (!response.ok) {
-      // Fallback: try the agent endpoint
-      return await callHermesAgentEndpoint(
-        messages[messages.length - 1]?.content || "",
-        agentName,
-      );
+      // For Hermes gateways, try the agent endpoint as fallback.
+      // For other gateways (OpenRouter, OpenAI, etc.), just throw the error.
+      const isHermesGateway = apiUrl.includes("localhost") || apiUrl.includes("8642");
+      if (isHermesGateway) {
+        return await callHermesAgentEndpoint(
+          messages[messages.length - 1]?.content || "",
+          agentName,
+        );
+      }
+      const errorText = await response.text().catch(() => "");
+      throw new Error(`API returned ${response.status}: ${errorText || response.statusText}`);
     }
 
     const data = await response.json();
@@ -177,11 +197,20 @@ export async function callHermes(
       animation: data.animation,
     };
   } catch (error) {
-    console.error("[Symbio] Hermes gateway error:", error);
-    return await callHermesAgentEndpoint(
-      messages[messages.length - 1]?.content || "",
-      agentName,
-    );
+    console.error("[Symbio] Gateway error:", error);
+    // For Hermes gateways, try the agent endpoint as fallback.
+    // For other gateways, return an error message.
+    const isHermesGateway = apiUrl.includes("localhost") || apiUrl.includes("8642");
+    if (isHermesGateway) {
+      return await callHermesAgentEndpoint(
+        messages[messages.length - 1]?.content || "",
+        agentName,
+      );
+    }
+    return {
+      message: "I can't reach my brain right now. Please check your gateway connection and API key.",
+      emotion: "sad",
+    };
   }
 }
 
@@ -197,7 +226,9 @@ async function callHermesAgentEndpoint(
   const apiUrl = getDynamicApiUrl();
 
   try {
-    const response = await fetch(`${apiUrl}/gateway/${name}`, {
+    // Normalize URL — remove trailing /v1 if present (Hermes gateway endpoint doesn't use /v1)
+    const normalizedUrl = apiUrl.replace(/\/v1\/?$/, '');
+    const response = await fetch(`${normalizedUrl}/gateway/${name}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

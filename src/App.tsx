@@ -67,43 +67,75 @@ const App = () => {
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null); // null = checking
 
   useEffect(() => {
-    window.symbioAPI?.needsSetup?.().then((needed: boolean) => {
-      setNeedsSetup(needed);
-    }).catch(() => {
-      // If the check fails, assume no setup needed (existing config)
-      setNeedsSetup(false);
-    });
+    // Check if setup is needed AND fetch runtime config from main process.
+    // The renderer's process.env is baked at build time by webpack, so
+    // AGENT_NAME, AGENT_DISPLAY_NAME etc. are always "companion" here.
+    // The main process loads the .env at startup, so we fetch the real
+    // values from it via IPC.
+    const initApp = async () => {
+      try {
+        // Fetch runtime config first (has the real agent name from .env)
+        const runtimeConfig = await window.symbioAPI?.getConfig?.();
+        if (runtimeConfig) {
+          applyConfigUpdate(runtimeConfig);
+        }
+        // Then check if setup is needed
+        const needed = await window.symbioAPI?.needsSetup?.();
+        setNeedsSetup(needed ?? false);
+      } catch {
+        // If the check fails, assume no setup needed (existing config)
+        setNeedsSetup(false);
+      }
+    };
+    initApp();
   }, []);
 
-  const handleSetupComplete = () => {
+  const handleSetupComplete = async () => {
+    // After setup saves the .env, fetch the updated config from main process.
+    // The renderer's config is baked at build time by webpack, so we need
+    // to get the runtime config from main process which has the updated values.
+    try {
+      const runtimeConfig = await window.symbioAPI?.getConfig?.();
+      if (runtimeConfig) {
+        applyConfigUpdate(runtimeConfig);
+      }
+    } catch (err) {
+      console.error("[Symbio] Failed to fetch updated config:", err);
+    }
     setNeedsSetup(false);
   };
 
-  // While checking, show a loading screen
-  if (needsSetup === null) {
-    return (
-      <ThemeProvider theme={theme}>
-        <CssBaseline />
-        <Box sx={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", bgcolor: "#0a0a0a" }}>
-          <Typography color="#b0bec5">Loading Symbio...</Typography>
-        </Box>
-      </ThemeProvider>
-    );
-  }
+  // Apply config updates from main process (after setup wizard or agent switch)
+  const applyConfigUpdate = (update: Record<string, unknown>) => {
+    if (update.agentName) config.agentName = update.agentName as string;
+    if (update.agentConfig) config.agentConfig = { ...config.agentConfig, ...update.agentConfig as Partial<typeof config.agentConfig> };
+    if (update.hermesApiUrl) config.hermesApiUrl = update.hermesApiUrl as string;
+    if (update.hermesApiKey) config.hermesApiKey = update.hermesApiKey as string;
+    if (update.llmModel) config.llmModel = update.llmModel as string;
+    if (update.openaiApiKey) config.openaiApiKey = update.openaiApiKey as string;
+    if (update.ttsModel) config.ttsModel = update.ttsModel as string;
+    if (update.ttsVoice) config.ttsVoice = update.ttsVoice as string;
+    if (update.ttsInstructions) config.ttsInstructions = update.ttsInstructions as string;
+    if (update.visionModel) config.visionModel = update.visionModel as string;
+    if (update.sttModel) config.sttModel = update.sttModel as string;
+    if (update.geminiApiKey) config.geminiApiKey = update.geminiApiKey as string;
+    // Update local state so the UI reflects the new name
+    if (update.agentName) setSelectedAgent(update.agentName as string);
+    console.log(`[Symbio] Config updated: agentName=${update.agentName}, displayName=${(update.agentConfig as any)?.displayName}`);
+  };
 
-  // If setup is needed, show the wizard
-  if (needsSetup) {
-    return (
-      <ThemeProvider theme={theme}>
-        <CssBaseline />
-        <SetupWizard onComplete={handleSetupComplete} />
-      </ThemeProvider>
-    );
-  }
+  // Listen for config updates from main process (e.g., after setup wizard saves)
+  useEffect(() => {
+    const cleanup = window.symbioAPI?.onConfigUpdated?.((update: Record<string, unknown>) => {
+      applyConfigUpdate(update);
+    });
+    return () => { cleanup?.(); };
+  }, []);
 
   // ── Symbio: Hot mic recording (moved from overlay to main window) ──
   // The overlay has setFocusable(false) which blocks getUserMedia on Linux/Wayland.
   // So we do mic recording here in the main window and send audio via IPC.
+  // IMPORTANT: All hooks must be called before any conditional returns (Rules of Hooks).
   const micStreamRef = useRef<MediaStream | null>(null);
   const micHarkRef = useRef<ReturnType<typeof hark> | null>(null);
   const micWaveSurferRef = useRef<WaveSurfer | null>(null);
@@ -423,7 +455,37 @@ const App = () => {
     window.symbioAPI?.analyzeScreenshot?.();
   }, []);
 
-  const agentConfig = COMPANIONS[selectedAgent] || COMPANIONS.companion;
+  // ── Symbio: Resolve agent config ────────────────────────────────
+  // For built-in agents (companion), look up COMPANIONS.
+  // For custom agents (set via setup wizard), use config.agentConfig
+  // since they won't be in the COMPANIONS dictionary.
+  const agentConfig = COMPANIONS[selectedAgent] || config.agentConfig;
+
+  // ── Symbio: First-Run Setup Wizard ────────────────────────────────
+  // All hooks MUST be called before any conditional returns (Rules of Hooks).
+  // These checks come after all useState/useRef/useEffect/useCallback calls.
+
+  // While checking, show a loading screen
+  if (needsSetup === null) {
+    return (
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <Box sx={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", bgcolor: "#0a0a0a" }}>
+          <Typography color="#b0bec5">Loading Symbio...</Typography>
+        </Box>
+      </ThemeProvider>
+    );
+  }
+
+  // If setup is needed, show the wizard
+  if (needsSetup) {
+    return (
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <SetupWizard onComplete={handleSetupComplete} />
+      </ThemeProvider>
+    );
+  }
 
   return (
     <Container maxWidth="md" sx={{ p: 1 }}>

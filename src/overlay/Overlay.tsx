@@ -13,11 +13,11 @@
  * - Connects to Miniverse for inter-agent communication
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import Scene from "../Scene";
-import { HermesTransport, updateDynamicAgent } from "../transport/HermesTransport";
-import { config, COMPANIONS } from "../config";
+import { HermesTransport } from "../transport/HermesTransport";
+import { config } from "../config";
 import { parseAutoAnimation, type AnimationTarget } from "../utils/autoAnimate";
 import { shouldTriggerVision } from "../utils/autoVision";
 import { loadSessionState, markNewSession, generateGreetingPrompt, updateSessionState } from "../utils/sessionContinuity";
@@ -80,29 +80,62 @@ const Overlay = () => {
     return () => cleanup?.();
   }, []);
 
-  // ── Symbio: Listen for agent switches ──────────────────────────
-  // When the user switches agents in the main window, the overlay
-  // needs to update its VRM avatar and chat transport to match.
+  // ── Symbio: Agent switching is handled by OverlayLayout ────────
+  // OverlayLayout registers onAgentSwitched and updates the key prop,
+  // which causes this Overlay component to remount with fresh config.
+  // No need for a separate onAgentSwitched here — the remount reads
+  // config.agentConfig.vrmPath and config.agentName directly.
+
+  // ── Symbio: Fetch runtime config on startup ────────────────────
+  // The renderer's process.env is baked at build time by webpack, so
+  // AGENT_NAME, AGENT_DISPLAY_NAME etc. are always "companion" here.
+  // Fetch the real values from the main process which loaded the .env.
   useEffect(() => {
-    const cleanup = window.symbioAPI?.onAgentSwitched?.((agent) => {
-      console.log(`[Symbio] Overlay: Switching to ${agent.displayName} (${agent.vrmPath})`);
-      setCurrentVrmUrl(agent.vrmPath);
-      setCurrentAgentName(agent.name);
-      // Update the dynamic agent state so new chat requests use the right agent
-      const agentConfig = COMPANIONS[agent.name];
-      if (agentConfig) {
-        updateDynamicAgent(agent.name, agentConfig.hermesApiKey, agentConfig.hermesApiUrl);
+    window.symbioAPI?.getConfig?.().then((runtimeConfig) => {
+      if (runtimeConfig) {
+        if (runtimeConfig.agentName) {
+          config.agentName = runtimeConfig.agentName as string;
+          setCurrentAgentName(runtimeConfig.agentName as string);
+        }
+        if (runtimeConfig.agentConfig) {
+          Object.assign(config.agentConfig, runtimeConfig.agentConfig);
+          if ((runtimeConfig.agentConfig as any).vrmPath) {
+            setCurrentVrmUrl((runtimeConfig.agentConfig as any).vrmPath);
+          }
+        }
+        console.log(`[Symbio] Overlay: Config fetched at startup: agentName=${runtimeConfig.agentName}, displayName=${(runtimeConfig.agentConfig as any)?.displayName}`);
       }
+    }).catch((err) => {
+      console.warn("[Symbio] Overlay: Failed to fetch config at startup:", err);
     });
-    return () => cleanup?.();
+  }, []);
+
+  // ── Symbio: Listen for config updates from main process ────────
+  // After setup wizard saves, main process sends config-updated event.
+  // Update our local config object so the overlay uses the new name, etc.
+  useEffect(() => {
+    const cleanup = window.symbioAPI?.onConfigUpdated?.((update: Record<string, unknown>) => {
+      if (update.agentName) {
+        config.agentName = update.agentName as string;
+        setCurrentAgentName(update.agentName as string);
+      }
+      if (update.agentConfig) {
+        Object.assign(config.agentConfig, update.agentConfig);
+        if ((update.agentConfig as any).vrmPath) {
+          setCurrentVrmUrl((update.agentConfig as any).vrmPath);
+        }
+      }
+      console.log(`[Symbio] Overlay: Config updated from main process: agentName=${update.agentName}`);
+    });
+    return () => { cleanup?.(); };
   }, []);
 
   // ── Symbio: Create Hermes transport ────────────────────────────
   // This replaces the DefaultChatTransport that pointed to lalaland.chat.
   // Now all conversations go through Hermes, which gives the agent
   // access to persistent memory, MCP tools, and SOUL.md personality.
-  // Key forces remount when agent changes, so transport gets fresh config
-  const hermesTransport = new HermesTransport();
+  // useMemo ensures we only create one transport per mount cycle.
+  const hermesTransport = useMemo(() => new HermesTransport(), []);
 
   // ── Symbio: Listen for speaking state from main process ───────
   // The overlay can't use speechSynthesis directly (setFocusable=false
@@ -110,18 +143,52 @@ const Overlay = () => {
   // the main window, and relay speaking-started/ended back for lip sync.
   // When speaking starts, we also trigger any pending animations that
   // were queued when the text arrived — this syncs animations with voice.
+  // Fallback: If speaking-started doesn't arrive within 1.5s of text,
+  // start lip sync anyway (in case TTS failed or events were lost).
+  const speakingFallbackRef = useRef<NodeJS.Timeout | null>(null);
+  // Track animation timeouts so they don't get lost
+  const animationTimeoutsRef = useRef<NodeJS.Timeout[]>([]);
+
+  // Helper to schedule an animation with tracking (prevents lost animations)
+  const scheduleAnimation = useCallback((target: AnimationTarget, delayMs: number, label: string) => {
+    const timeout = setTimeout(() => {
+      console.log(`[Symbio] ${label}: ${target.category}${target.specific ? ` → ${target.specific}` : ""}`);
+      triggerAnimation(target.category, target.specific);
+      // Remove from tracking list
+      animationTimeoutsRef.current = animationTimeoutsRef.current.filter(t => t !== timeout);
+    }, delayMs);
+    animationTimeoutsRef.current.push(timeout);
+    console.log(`[Symbio] ${label} scheduled: ${target.category} in ${delayMs}ms`);
+  }, [triggerAnimation]);
+
+  // Clean up animation timeouts on unmount
+  useEffect(() => {
+    return () => {
+      animationTimeoutsRef.current.forEach(t => clearTimeout(t));
+      animationTimeoutsRef.current = [];
+    };
+  }, []);
+
   useEffect(() => {
     const cleanupStart = window.symbioAPI?.onSpeakingStarted?.(() => {
       console.log("[Symbio] Overlay: speaking-started from main process");
       setIsSpeaking(true);
-      // Trigger any pending animations now that voice is playing
+      // Clear any fallback timeout since we got the real event
+      if (speakingFallbackRef.current) {
+        clearTimeout(speakingFallbackRef.current);
+        speakingFallbackRef.current = null;
+      }
+      // Trigger any pending animations now that voice is playing.
+      // Space them out so each animation has time to play and return
+      // to idle before the next one starts. 5s gap gives enough time
+      // for most Mixamo clips (2-3s) plus a brief idle pause.
       setPendingAnimations((prev) => {
         if (prev.length > 0) {
+          // Clear any previously scheduled animations
+          animationTimeoutsRef.current.forEach(t => clearTimeout(t));
+          animationTimeoutsRef.current = [];
           prev.forEach((target, i) => {
-            setTimeout(() => {
-              console.log(`[Symbio] Auto-animation (synced) [${i+1}/${prev.length}]: ${target.category}${target.specific ? ` → ${target.specific}` : ""}`);
-              triggerAnimation(target.category, target.specific);
-            }, i * 1500); // 1.5s between animations
+            scheduleAnimation(target, i * 7000 + 500, `Auto-animation (synced) [${i+1}/${prev.length}]`);
           });
         }
         return []; // Clear the queue
@@ -129,13 +196,31 @@ const Overlay = () => {
     });
     const cleanupEnd = window.symbioAPI?.onSpeakingEnded?.(() => {
       console.log("[Symbio] Overlay: speaking-ended from main process");
-      setIsSpeaking(false);
+      // Add a small buffer before stopping lip sync — the audio may still
+      // be trailing by a fraction of a second after the main process sends
+      // speaking-ended. This prevents the mouth from stopping before the
+      // audio actually finishes.
+      setTimeout(() => {
+        setIsSpeaking(false);
+      }, 500);
+      // Clear any fallback timeout
+      if (speakingFallbackRef.current) {
+        clearTimeout(speakingFallbackRef.current);
+        speakingFallbackRef.current = null;
+      }
+      // Cancel any pending animations — the avatar should return to idle
+      // when speaking ends, not continue playing queued animations.
+      animationTimeoutsRef.current.forEach(t => clearTimeout(t));
+      animationTimeoutsRef.current = [];
     });
     return () => {
       cleanupStart?.();
       cleanupEnd?.();
+      if (speakingFallbackRef.current) {
+        clearTimeout(speakingFallbackRef.current);
+      }
     };
-  }, [triggerAnimation]);
+  }, [triggerAnimation, scheduleAnimation]);
 
   // ── Symbio: Listen for voice toggle state ───────────────────────
   // When the user toggles voice on/off in the main window, the
@@ -163,13 +248,36 @@ const Overlay = () => {
       // speaking-started/ended events that drive lip sync.
       console.log(`[Symbio] Overlay: sending speak-text via IPC (${text.length} chars)`);
       window.symbioAPI?.speakText?.(text);
+      // Fallback: If speaking-started doesn't arrive within 1.5s,
+      // start lip sync anyway (in case TTS failed or events were lost)
+      if (speakingFallbackRef.current) clearTimeout(speakingFallbackRef.current);
+      speakingFallbackRef.current = setTimeout(() => {
+        console.log("[Symbio] Overlay: speaking-started fallback — starting lip sync without TTS event");
+        setIsSpeaking(true);
+        // Trigger pending animations too
+        setPendingAnimations((prev) => {
+          if (prev.length > 0) {
+            animationTimeoutsRef.current.forEach(t => clearTimeout(t));
+            animationTimeoutsRef.current = [];
+            prev.forEach((target, i) => {
+              scheduleAnimation(target, i * 7000 + 500, "Auto-animation (fallback)");
+            });
+          }
+          return [];
+        });
+        // Auto-stop after estimated text duration (~150 words per minute)
+        const estimatedDuration = Math.max(2000, (text.split(" ").length / 150) * 60000);
+        setTimeout(() => {
+          setIsSpeaking(false);
+        }, estimatedDuration);
+      }, 1500);
       return undefined; // No URL needed — speech handled by main process
     } catch (error) {
       console.error("[Symbio] Voice error:", error);
       setIsSpeaking(false);
       return undefined;
     }
-  }, [voiceEnabled]);
+  }, [voiceEnabled, triggerAnimation]);
 
   // Helper to queue or immediately play animations based on voice state.
   // When voice is enabled, animations are queued until speaking-started fires
@@ -180,15 +288,14 @@ const Overlay = () => {
       // Queue — will trigger when speaking-started fires
       setPendingAnimations(animTargets);
     } else {
-      // No voice — play animations immediately
+      // No voice — play animations immediately, spaced out
+      animationTimeoutsRef.current.forEach(t => clearTimeout(t));
+      animationTimeoutsRef.current = [];
       animTargets.forEach((target, i) => {
-        setTimeout(() => {
-          console.log(`[Symbio] Auto-animation (no voice) [${i+1}/${animTargets.length}]: ${target.category}${target.specific ? ` → ${target.specific}` : ""}`);
-          triggerAnimation(target.category, target.specific);
-        }, i * 1500);
+        scheduleAnimation(target, i * 7000 + 500, `Auto-animation (no voice) [${i+1}/${animTargets.length}]`);
       });
     }
-  }, [voiceEnabled, triggerAnimation]);
+  }, [voiceEnabled, triggerAnimation, scheduleAnimation]);
 
   const { sendMessage } = useChat({
     transport: hermesTransport,

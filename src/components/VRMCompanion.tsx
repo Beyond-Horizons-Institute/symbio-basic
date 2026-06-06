@@ -89,6 +89,17 @@ const VrmCompanion = forwardRef(
     const [animationCache, setAnimationCache] = useState<
       Record<string, AnimationAction[]>
     >({});
+    // Map from animation file path to action, for specific animation lookup.
+    // Mixamo FBX clip names are often "mixamo.com" or "Take 001", NOT the
+    // file name, so we can't match by clip name. Instead, we store the file
+    // path and look up by that.
+    const animationPathMap = useRef<Map<string, AnimationAction>>(new Map());
+    // Track the current returnToIdle timeout so we can cancel it when a new
+    // animation starts. Without this, animations overlap and the T-pose flashes.
+    const returnToIdleTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    // Track the currently playing one-shot animation so we can stop it cleanly
+    // when a new animation interrupts it.
+    const currentOneShotRef = useRef<AnimationAction | null>(null);
     const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
     const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
     const [audio, setAudio] = useState<HTMLAudioElement | null>(null);
@@ -172,65 +183,129 @@ const VrmCompanion = forwardRef(
           hasVrm: !!vrmRef.current,
         });
 
-        // Helper: crossfade back to idle after a one-shot animation finishes
-        const returnToIdle = (action: AnimationAction, duration: number) => {
-          const fadeOutTime = (duration - 0.5) * 1000;
-          setTimeout(() => {
-            action.fadeOut(0.5);
-            // Crossfade idle back in
+        // Helper: crossfade back to idle after a one-shot animation finishes.
+        // Uses the AnimationMixer's 'finished' event for precise timing —
+        // no setTimeout, no T-pose flashes from timing mismatches.
+        const returnToIdle = (action: AnimationAction) => {
+          // Cancel any previous returnToIdle timeout
+          if (returnToIdleTimeoutRef.current) {
+            clearTimeout(returnToIdleTimeoutRef.current);
+            returnToIdleTimeoutRef.current = null;
+          }
+          // Listen for the animation to finish naturally.
+          // LoopOnce animations fire a 'finished' event on the mixer
+          // at the exact frame they complete — no timing gaps.
+          const onFinished = (e: any) => {
+            // Only respond to our action finishing, not other animations
+            if (e.action !== action) return;
+            animationMixer?.removeEventListener('finished', onFinished);
+            // Overlapping crossfade: start idle BEFORE fading out the one-shot
+            // so there's always an active animation on the avatar.
             const idleAction = animationCache.idle?.[0];
             if (idleAction) {
-              idleAction.reset().fadeIn(0.5).play();
+              idleAction.reset().fadeIn(0.3).play();
             }
-          }, fadeOutTime);
+            action.fadeOut(0.3);
+            currentOneShotRef.current = null;
+          };
+          animationMixer?.addEventListener('finished', onFinished);
+          // Safety net: if the 'finished' event never fires (e.g., action was
+          // stopped early), clean up after the clip duration + 1s buffer.
+          const duration = action.getClip().duration;
+          returnToIdleTimeoutRef.current = setTimeout(() => {
+            animationMixer?.removeEventListener('finished', onFinished);
+            const idleAction = animationCache.idle?.[0];
+            if (idleAction && currentOneShotRef.current === action) {
+              idleAction.reset().fadeIn(0.3).play();
+              action.fadeOut(0.3);
+              currentOneShotRef.current = null;
+            }
+            returnToIdleTimeoutRef.current = null;
+          }, (duration + 1) * 1000);
         };
 
-        // If a specific animation file is requested, load it directly
+        // If a specific animation file is requested, find it in cache
         if (specific) {
           const anims = (animations as Record<string, string[]>)[type];
           const specificPath = anims?.find((a: string) =>
             a.toLowerCase().includes(specific.toLowerCase().replace(/\s+/g, "-"))
           );
+          // Look up the specific animation by file path in our path map.
+          // Mixamo FBX clip names are often "mixamo.com" or "Take 001",
+          // NOT the file name, so we can't match by clip name.
+          if (specificPath) {
+            const cachedAction = animationPathMap.current.get(specificPath);
+            if (cachedAction) {
+              console.log(`[Symbio] Playing specific "${specific}" from cache (path: ${specificPath})`);
+              // Stop any currently playing one-shot animation
+              if (currentOneShotRef.current) {
+                currentOneShotRef.current.fadeOut(0.2);
+              }
+              const idleAction = animationCache.idle?.[0];
+              idleAction?.fadeOut(0.3);
+              cachedAction.reset().setLoop(LoopOnce, 1).fadeIn(0.3).play();
+              currentOneShotRef.current = cachedAction;
+              returnToIdle(cachedAction);
+              return;
+            }
+          }
+          // Fall back to loading on-the-fly if not in cache
           if (specificPath && vrmRef.current && animationMixer) {
             console.log(`[Symbio] Loading specific animation: ${specificPath}`);
             const clip = await loadMixamoAnimation(specificPath, vrmRef.current);
             const action = animationMixer.clipAction(clip);
+            // Stop any currently playing one-shot animation
+            if (currentOneShotRef.current) {
+              currentOneShotRef.current.fadeOut(0.2);
+            }
             const idleAction = animationCache.idle?.[0];
             idleAction?.fadeOut(0.3);
             action.reset().setLoop(LoopOnce, 1).fadeIn(0.3).play();
-            returnToIdle(action, clip.duration);
+            currentOneShotRef.current = action;
+            returnToIdle(action);
             return;
           }
           console.warn(`[Symbio] Specific animation "${specific}" not found in ${type}, falling back to random`);
         }
 
-        // If already cached, play from cache
+        // If already cached, play from cache (should be the common path now)
         if (animationCache[type]?.length) {
-          const action = animationCache[type][0];
-          console.log(`[Symbio] Playing "${type}" from cache`);
+          // Pick a random animation from the category cache for variety
+          const cachedActions = animationCache[type];
+          const action = cachedActions[Math.floor(Math.random() * cachedActions.length)];
+          console.log(`[Symbio] Playing "${type}" from cache (${cachedActions.length} options)`);
+          // Stop any currently playing one-shot animation
+          if (currentOneShotRef.current) {
+            currentOneShotRef.current.fadeOut(0.2);
+          }
           // Fade out idle, play the one-shot
           const idleAction = animationCache.idle?.[0];
           idleAction?.fadeOut(0.3);
           action.reset().setLoop(LoopOnce, 1).fadeIn(0.3).play();
+          currentOneShotRef.current = action;
           // Get clip duration for return-to-idle timing
-          const clipDuration = action.getClip().duration;
-          returnToIdle(action, clipDuration);
+          returnToIdle(action);
           return;
         }
-        // Otherwise, load on-the-fly like talk/playEmotion do
+        // Fallback: load on-the-fly (shouldn't happen with preloading)
         const randomAnim = getRandomAnimation(type);
         if (!randomAnim || !vrmRef.current || !animationMixer) {
           console.warn(`[Symbio] Cannot play "${type}":`, { randomAnim, vrm: !!vrmRef.current, mixer: !!animationMixer });
           return;
         }
-        console.log(`[Symbio] Loading "${type}" animation: ${randomAnim}`);
+        console.log(`[Symbio] Loading "${type}" animation on-the-fly: ${randomAnim}`);
         const clip = await loadMixamoAnimation(randomAnim, vrmRef.current);
         const action = animationMixer.clipAction(clip);
+        // Stop any currently playing one-shot animation
+        if (currentOneShotRef.current) {
+          currentOneShotRef.current.fadeOut(0.2);
+        }
         // Fade out idle, play the one-shot
         const idleAction = animationCache.idle?.[0];
         idleAction?.fadeOut(0.3);
         action.reset().setLoop(LoopOnce, 1).fadeIn(0.3).play();
-        returnToIdle(action, clip.duration);
+        currentOneShotRef.current = action;
+        returnToIdle(action);
       },
       [animationCache, animationMixer, getRandomAnimation],
     );
@@ -300,28 +375,47 @@ const VrmCompanion = forwardRef(
       mixer.timeScale = 1.0;
       setAnimationMixer(mixer);
 
-      const randomWalk = getRandomAnimation("walk");
-      const randomIdle = getRandomAnimation("idle");
+      // ── Preload ALL animations ────────────────────────────────────
+      // Loading animations on-the-fly causes T-pose flashes (the avatar
+      // has no animation while the file loads). Preloading everything
+      // at startup means playAnimation() can play instantly from cache.
+      const allCategories = ["idle", "walk", "dance", "greet", "happy", "angry", "bored", "emote", "talk"];
+      const loadPromises: Promise<{ category: string; action: AnimationAction; path: string }>[] = [];
 
-      const [walkClip, idleClip] = await Promise.all([
-        randomWalk
-          ? loadMixamoAnimation(randomWalk, vrmRef.current)
-          : Promise.resolve(null),
-        randomIdle
-          ? loadMixamoAnimation(randomIdle, vrmRef.current)
-          : Promise.resolve(null),
-      ]);
+      for (const category of allCategories) {
+        const animPaths = (animations as Record<string, string[]>)[category];
+        if (!animPaths?.length) continue;
+        for (const animPath of animPaths) {
+          loadPromises.push(
+            loadMixamoAnimation(animPath, vrmRef.current)
+              .then((clip) => ({ category, action: mixer.clipAction(clip), path: animPath }))
+              .catch((err) => {
+                console.warn(`[Symbio] Failed to preload ${category}/${animPath}:`, err);
+                return null as any;
+              })
+          );
+        }
+      }
 
-      const walkAction = walkClip ? mixer.clipAction(walkClip) : null;
-      const idleAction = idleClip ? mixer.clipAction(idleClip) : null;
+      const loadedAnims = await Promise.all(loadPromises);
+      const newCache: Record<string, AnimationAction[]> = {};
+      for (const { category, action, path } of loadedAnims) {
+        if (!action) continue;
+        if (!newCache[category]) newCache[category] = [];
+        newCache[category].push(action);
+        // Store in path map for specific animation lookup
+        if (path) {
+          animationPathMap.current.set(path, action);
+        }
+      }
 
       setAnimationCache((prev) => ({
         ...prev,
-        ...(walkAction ? { walk: [...(prev?.walk || []), walkAction] } : {}),
-        ...(idleAction ? { idle: [...(prev?.idle || []), idleAction] } : {}),
+        ...newCache,
       }));
 
-      idleAction?.play();
+      // Start idle animation
+      newCache.idle?.[0]?.play();
 
       const blinkTrack =
         vrmRef.current.expressionManager?.getExpressionTrackName("blink");

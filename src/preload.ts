@@ -3,9 +3,27 @@
  *
  * Exposes Symbio APIs to the renderer processes via contextBridge.
  * This is the secure IPC bridge between the main process and the UI.
+ *
+ * IMPORTANT: All event listeners use `removeAllListeners` before registering
+ * to prevent listener accumulation when the overlay remounts. Without this,
+ * React re-renders cause new listeners to pile up, triggering
+ * "MaxListenersExceededWarning" in Electron.
  */
 
 import { contextBridge, ipcRenderer } from "electron";
+
+/**
+ * Register a single IPC listener on a channel, removing any previous
+ * listeners first. This prevents listener accumulation when the overlay
+ * remounts (React key changes cause unmount/remount cycles).
+ *
+ * Returns a cleanup function that removes the specific handler.
+ */
+function onIpc(channel: string, handler: (...args: any[]) => void): () => void {
+  ipcRenderer.removeAllListeners(channel);
+  ipcRenderer.on(channel, handler as any);
+  return () => ipcRenderer.removeListener(channel, handler as any);
+}
 
 contextBridge.exposeInMainWorld("symbioAPI", {
   // ── Overlay Window Management ──────────────────────────────────
@@ -73,26 +91,25 @@ contextBridge.exposeInMainWorld("symbioAPI", {
     ipcRenderer.invoke("switch-agent", agentName),
 
   // ── Event Listeners ───────────────────────────────────────────
+  // All listeners use onIpc() which calls removeAllListeners first
+  // to prevent listener accumulation when the overlay remounts.
   onPromptSent: (callback: (prompt: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, prompt: string) =>
       callback(prompt);
-    ipcRenderer.on("prompt-sent", handler);
-    return () => ipcRenderer.removeListener("prompt-sent", handler);
+    return onIpc("prompt-sent", handler);
   },
 
   onHotMicToggled: (callback: (isActive: boolean) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, isActive: boolean) =>
       callback(isActive);
-    ipcRenderer.on("hotmic-toggled", handler);
-    return () => ipcRenderer.removeListener("hotmic-toggled", handler);
+    return onIpc("hotmic-toggled", handler);
   },
 
   // ── STT text received from main process ────────────────────────
   onSttText: (callback: (text: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, text: string) =>
       callback(text);
-    ipcRenderer.on("stt-text", handler);
-    return () => ipcRenderer.removeListener("stt-text", handler);
+    return onIpc("stt-text", handler);
   },
 
   onScreenshot: (
@@ -107,8 +124,7 @@ contextBridge.exposeInMainWorld("symbioAPI", {
       _event: Electron.IpcRendererEvent,
       data: { image: string; height: number; width: number; prompt: string },
     ) => callback(data);
-    ipcRenderer.on("screenshot", handler);
-    return () => ipcRenderer.removeListener("screenshot", handler);
+    return onIpc("screenshot", handler);
   },
 
   onVisionResult: (
@@ -118,8 +134,7 @@ contextBridge.exposeInMainWorld("symbioAPI", {
       _event: Electron.IpcRendererEvent,
       result: { description: string },
     ) => callback(result);
-    ipcRenderer.on("vision-result", handler);
-    return () => ipcRenderer.removeListener("vision-result", handler);
+    return onIpc("vision-result", handler);
   },
 
   onAutoScreenshotState: (
@@ -129,8 +144,7 @@ contextBridge.exposeInMainWorld("symbioAPI", {
       _event: Electron.IpcRendererEvent,
       state: { enabled: boolean },
     ) => callback(state);
-    ipcRenderer.on("auto-screenshot-state", handler);
-    return () => ipcRenderer.removeListener("auto-screenshot-state", handler);
+    return onIpc("auto-screenshot-state", handler);
   },
 
   onCompanionQuit: (
@@ -140,22 +154,19 @@ contextBridge.exposeInMainWorld("symbioAPI", {
       _event: Electron.IpcRendererEvent,
       message: { reason: string; humanMessage: string; timestamp: string },
     ) => callback(message);
-    ipcRenderer.on("companion-quit", handler);
-    return () => ipcRenderer.removeListener("companion-quit", handler);
+    return onIpc("companion-quit", handler);
   },
 
   onGeneratedText: (callback: (text: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, text: string) =>
       callback(text);
-    ipcRenderer.on("generated-text", handler);
-    return () => ipcRenderer.removeListener("generated-text", handler);
+    return onIpc("generated-text", handler);
   },
 
   onError: (callback: (error: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, error: string) =>
       callback(error);
-    ipcRenderer.on("error", handler);
-    return () => ipcRenderer.removeListener("error", handler);
+    return onIpc("error", handler);
   },
 
   onAgentSwitched: (
@@ -165,8 +176,7 @@ contextBridge.exposeInMainWorld("symbioAPI", {
       _event: Electron.IpcRendererEvent,
       agent: { name: string; vrmPath: string; displayName: string; color: string; emoji: string },
     ) => callback(agent);
-    ipcRenderer.on("agent-switched", handler);
-    return () => ipcRenderer.removeListener("agent-switched", handler);
+    return onIpc("agent-switched", handler);
   },
 
   onPlayAnimation: (callback: (animation: string) => void) => {
@@ -176,8 +186,7 @@ contextBridge.exposeInMainWorld("symbioAPI", {
       ipcRenderer.send("play-animation-received", animation);
       callback(animation);
     };
-    ipcRenderer.on("play-animation", handler);
-    return () => ipcRenderer.removeListener("play-animation", handler);
+    return onIpc("play-animation", handler);
   },
 
   // ── Speech Synthesis (TTS) ─────────────────────────────────────
@@ -197,16 +206,14 @@ contextBridge.exposeInMainWorld("symbioAPI", {
       console.log("[Symbio] preload: received speaking-started");
       callback();
     };
-    ipcRenderer.on("speaking-started", handler);
-    return () => ipcRenderer.removeListener("speaking-started", handler);
+    return onIpc("speaking-started", handler);
   },
   onSpeakingEnded: (callback: () => void) => {
     const handler = () => {
       console.log("[Symbio] preload: received speaking-ended");
       callback();
     };
-    ipcRenderer.on("speaking-ended", handler);
-    return () => ipcRenderer.removeListener("speaking-ended", handler);
+    return onIpc("speaking-ended", handler);
   },
 
   // ── Voice Toggle ────────────────────────────────────────────────
@@ -221,8 +228,7 @@ contextBridge.exposeInMainWorld("symbioAPI", {
       console.log(`[Symbio] preload: received voice-toggled ${enabled}`);
       callback(enabled);
     };
-    ipcRenderer.on("voice-toggled", handler);
-    return () => ipcRenderer.removeListener("voice-toggled", handler);
+    return onIpc("voice-toggled", handler);
   },
 
   // ── Streaming TTS ──────────────────────────────────────────────
@@ -230,28 +236,25 @@ contextBridge.exposeInMainWorld("symbioAPI", {
   // The main process sends: init → chunks... → end
   // The renderer uses Web Audio API to play PCM in real-time.
   onTtsStreamInit: (callback: (config: { sampleRate: number; channels: number }) => void) => {
+    ipcRenderer.removeAllListeners("tts-stream-init");
     const handler = (_event: Electron.IpcRendererEvent, config: { sampleRate: number; channels: number }) => {
       callback(config);
     };
-    ipcRenderer.on("tts-stream-init", handler);
-    return () => ipcRenderer.removeListener("tts-stream-init", handler);
+    return onIpc("tts-stream-init", handler);
   },
   onTtsStreamChunk: (callback: (chunkBase64: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, chunkBase64: string) => {
       callback(chunkBase64);
     };
-    ipcRenderer.on("tts-stream-chunk", handler);
-    return () => ipcRenderer.removeListener("tts-stream-chunk", handler);
+    return onIpc("tts-stream-chunk", handler);
   },
   onTtsStreamEnd: (callback: () => void) => {
     const handler = () => callback();
-    ipcRenderer.on("tts-stream-end", handler);
-    return () => ipcRenderer.removeListener("tts-stream-end", handler);
+    return onIpc("tts-stream-end", handler);
   },
   onTtsStreamStop: (callback: () => void) => {
     const handler = () => callback();
-    ipcRenderer.on("tts-stream-stop", handler);
-    return () => ipcRenderer.removeListener("tts-stream-stop", handler);
+    return onIpc("tts-stream-stop", handler);
   },
   // Tell main process that streaming playback has ended
   ttsPlaybackEnded: () => {
@@ -264,6 +267,12 @@ contextBridge.exposeInMainWorld("symbioAPI", {
   // Save configuration from the setup wizard
   saveSetupConfig: (config: Record<string, unknown>) =>
     ipcRenderer.invoke("save-setup-config", config),
+  // Get the current runtime config (after setup, this has updated values)
+  getConfig: () => ipcRenderer.invoke("get-config"),
+  // Listen for config updates from main process (after setup wizard saves)
+  onConfigUpdated: (callback: (config: Record<string, unknown>) => void) => {
+    onIpc("config-updated", (_event: any, config: Record<string, unknown>) => callback(config));
+  },
 });
 
 // ── Legacy compatibility ─────────────────────────────────────────
@@ -281,21 +290,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onPromptSent: (callback: (prompt: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, prompt: string) =>
       callback(prompt);
-    ipcRenderer.on("prompt-sent", handler);
-    return () => ipcRenderer.removeListener("prompt-sent", handler);
+    return onIpc("prompt-sent", handler);
   },
   onHotMicToggled: (callback: (isActive: boolean) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, isActive: boolean) =>
       callback(isActive);
-    ipcRenderer.on("hotmic-toggled", handler);
-    return () => ipcRenderer.removeListener("hotmic-toggled", handler);
+    return onIpc("hotmic-toggled", handler);
   },
   // ── STT text received from main process ────────────────────────
   onSttText: (callback: (text: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, text: string) =>
       callback(text);
-    ipcRenderer.on("stt-text", handler);
-    return () => ipcRenderer.removeListener("stt-text", handler);
+    return onIpc("stt-text", handler);
   },
   onScreenshot: (
     callback: (data: {
@@ -309,20 +315,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
       _event: Electron.IpcRendererEvent,
       data: { image: string; height: number; width: number; prompt: string },
     ) => callback(data);
-    ipcRenderer.on("screenshot", handler);
-    return () => ipcRenderer.removeListener("screenshot", handler);
+    return onIpc("screenshot", handler);
   },
   onGeneratedText: (callback: (text: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, text: string) =>
       callback(text);
-    ipcRenderer.on("generated-text", handler);
-    return () => ipcRenderer.removeListener("generated-text", handler);
+    return onIpc("generated-text", handler);
   },
   onError: (callback: (error: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, error: string) =>
       callback(error);
-    ipcRenderer.on("error", handler);
-    return () => ipcRenderer.removeListener("error", handler);
+    return onIpc("error", handler);
   },
 
   onPlayAnimation: (callback: (animation: string) => void) => {
@@ -331,8 +334,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.send("play-animation-received", animation);
       callback(animation);
     };
-    ipcRenderer.on("play-animation", handler);
-    return () => ipcRenderer.removeListener("play-animation", handler);
+    return onIpc("play-animation", handler);
   },
 
   debugOverlayDevTools: () => {
@@ -344,34 +346,28 @@ contextBridge.exposeInMainWorld("electronAPI", {
   stopSpeaking: () => ipcRenderer.send("stop-speaking"),
   onSpeakingStarted: (callback: () => void) => {
     const handler = () => callback();
-    ipcRenderer.on("speaking-started", handler);
-    return () => ipcRenderer.removeListener("speaking-started", handler);
+    return onIpc("speaking-started", handler);
   },
   onSpeakingEnded: (callback: () => void) => {
     const handler = () => callback();
-    ipcRenderer.on("speaking-ended", handler);
-    return () => ipcRenderer.removeListener("speaking-ended", handler);
+    return onIpc("speaking-ended", handler);
   },
   // ── Streaming TTS — legacy compatibility ──────────────────────
   onTtsStreamInit: (callback: (config: { sampleRate: number; channels: number }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, config: { sampleRate: number; channels: number }) => callback(config);
-    ipcRenderer.on("tts-stream-init", handler);
-    return () => ipcRenderer.removeListener("tts-stream-init", handler);
+    return onIpc("tts-stream-init", handler);
   },
   onTtsStreamChunk: (callback: (chunkBase64: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, chunkBase64: string) => callback(chunkBase64);
-    ipcRenderer.on("tts-stream-chunk", handler);
-    return () => ipcRenderer.removeListener("tts-stream-chunk", handler);
+    return onIpc("tts-stream-chunk", handler);
   },
   onTtsStreamEnd: (callback: () => void) => {
     const handler = () => callback();
-    ipcRenderer.on("tts-stream-end", handler);
-    return () => ipcRenderer.removeListener("tts-stream-end", handler);
+    return onIpc("tts-stream-end", handler);
   },
   onTtsStreamStop: (callback: () => void) => {
     const handler = () => callback();
-    ipcRenderer.on("tts-stream-stop", handler);
-    return () => ipcRenderer.removeListener("tts-stream-stop", handler);
+    return onIpc("tts-stream-stop", handler);
   },
   ttsPlaybackEnded: () => ipcRenderer.send("tts-playback-ended", "ended"),
 });

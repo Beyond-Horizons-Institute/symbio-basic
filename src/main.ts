@@ -28,7 +28,38 @@ process.on("uncaughtException", (err: NodeJS.ErrnoException) => {
 
 // Load .env FIRST — before any other imports that might read process.env
 import dotenv from "dotenv";
+import { existsSync } from "fs";
+import { join } from "path";
+
 dotenv.config();
+
+// Also load the user's setup .env from userData (created by the setup wizard).
+// This overrides any values from the project .env, so the user's choices
+// (gateway URL, API key, model, companion name, etc.) take priority.
+// On Linux: ~/.config/Symbio Basic/.env
+// On macOS: ~/Library/Application Support/Symbio Basic/.env
+// On Windows: %APPDATA%/Symbio Basic/.env
+const setupEnvCandidates = [
+  join(process.env.HOME || "/", ".config", "Symbio Basic", ".env"),          // Linux
+  join(process.env.HOME || "/", "Library", "Application Support", "Symbio Basic", ".env"), // macOS
+  join(process.env.APPDATA || "", "Symbio Basic", ".env"),                    // Windows
+];
+
+for (const envPath of setupEnvCandidates) {
+  if (existsSync(envPath)) {
+    console.log(`[Symbio] Loading setup config from ${envPath}`);
+    dotenv.config({ path: envPath, override: true });
+    break;
+  }
+}
+
+// ── CRITICAL: Import config AFTER dotenv is loaded ───────────────────
+// ES module imports are hoisted — they run before any other code.
+// But since we removed DefinePlugin from the main process webpack config,
+// process.env is read at runtime (not replaced at build time), so
+// dotenv.config() above has already set the correct values.
+// We still use require() to be explicit about the load order.
+const { config, COMPANIONS } = require("./config");
 
 import {
   app,
@@ -43,11 +74,9 @@ import {
   net,
 } from "electron";
 import { writeFile } from "fs/promises";
-import { readFileSync, existsSync } from "fs";
-import { join } from "path";
+import { readFileSync } from "fs";
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { config, COMPANIONS } from "./config";
 import { GeminiClient } from "./transport/GeminiClient";
 import { STTClient } from "./transport/STTClient";
 import { MemoryClient } from "./transport/MemoryClient";
@@ -81,20 +110,29 @@ if (require("electron-squirrel-startup")) {
 // 2. grim (Wayland-native screenshot tool)
 // 3. cosmic-screenshot (COSMIC desktop's screenshot tool)
 // Returns a Buffer of PNG data, or null if all methods fail.
-async function captureScreen(width: number, height: number): Promise<Buffer | null> {
+//
+// For AUTO-screenshots, we skip desktopCapturer entirely because
+// it triggers a permission popup on Wayland/COSMIC. The user
+// shouldn't be interrupted every 30 seconds just because the
+// companion wants to see the screen. Only manual "Analyze Screen"
+// clicks use desktopCapturer (where a popup is expected).
+async function captureScreen(width: number, height: number, silent = false): Promise<Buffer | null> {
   // Method 1: Try Electron's desktopCapturer (works on X11/macOS/Windows)
-  try {
-    const sources = await desktopCapturer.getSources({
-      types: ["screen"],
-      thumbnailSize: { width, height },
-    });
-    const png = sources[0]?.thumbnail?.toPNG();
-    if (png && png.length > 0) {
-      console.log("[Symbio] Screen capture: desktopCapturer succeeded");
-      return Buffer.from(png);
+  // Skip for auto-screenshots — it triggers permission popups on Wayland
+  if (!silent) {
+    try {
+      const sources = await desktopCapturer.getSources({
+        types: ["screen"],
+        thumbnailSize: { width, height },
+      });
+      const png = sources[0]?.thumbnail?.toPNG();
+      if (png && png.length > 0) {
+        console.log("[Symbio] Screen capture: desktopCapturer succeeded");
+        return Buffer.from(png);
+      }
+    } catch (e) {
+      console.log("[Symbio] Screen capture: desktopCapturer failed:", (e as Error).message);
     }
-  } catch (e) {
-    console.log("[Symbio] Screen capture: desktopCapturer failed:", (e as Error).message);
   }
 
   // Method 2: Try grim (Wayland-native screenshot tool)
@@ -136,6 +174,24 @@ async function captureScreen(width: number, height: number): Promise<Buffer | nu
     }
   } catch (e) {
     console.log("[Symbio] Screen capture: cosmic-screenshot failed:", (e as Error).message);
+  }
+
+  // Method 4 (silent only): Try desktopCapturer as last resort even for silent mode
+  // This is a fallback — on X11/macOS/Windows it won't trigger a popup
+  if (silent) {
+    try {
+      const sources = await desktopCapturer.getSources({
+        types: ["screen"],
+        thumbnailSize: { width, height },
+      });
+      const png = sources[0]?.thumbnail?.toPNG();
+      if (png && png.length > 0) {
+        console.log("[Symbio] Screen capture (silent fallback): desktopCapturer succeeded");
+        return Buffer.from(png);
+      }
+    } catch (e) {
+      console.log("[Symbio] Screen capture (silent fallback): desktopCapturer failed:", (e as Error).message);
+    }
   }
 
   console.error("[Symbio] Screen capture: All methods failed!");
@@ -433,7 +489,7 @@ app.on("ready", () => {
         type: "audio/wav",
       });
       formData.append("file", file);
-      formData.append("model", "whisper-1");
+      formData.append("model", config.sttModel || "whisper-1");
 
       const whisperResp = await fetch(
         "https://api.openai.com/v1/audio/transcriptions",
@@ -494,9 +550,11 @@ app.on("ready", () => {
     try {
       messages.push({ role: "user", content: prompt });
 
-      // Call Hermes gateway
+      // Call AI gateway
+      // Normalize URL to avoid double /v1 (OpenRouter already has /v1)
+      const normalizedApiUrl = config.hermesApiUrl.replace(/\/v1\/?$/, '');
       const response = await fetch(
-        `${config.hermesApiUrl}/v1/chat/completions`,
+        `${normalizedApiUrl}/v1/chat/completions`,
         {
           method: "POST",
           headers: {
@@ -506,23 +564,31 @@ app.on("ready", () => {
               : {}),
           },
           body: JSON.stringify({
-            model: config.agentName,
+            model: config.llmModel || config.agentName,
             messages: [
               {
                 role: "system",
                 content: `You are ${config.agentConfig.displayName}, a symbiotic AI companion with a 3D avatar body. ${config.agentConfig.personality}
 
-ANIMATION SYSTEM: You have a 3D avatar that can animate! Use *action* markers in your responses to trigger animations. Here are ALL the animations you can do:
+ANIMATION SYSTEM: You have a 3D avatar that can animate! Put action words between asterisks to trigger animations. Use SHORT, SPECIFIC action words only — not full sentences. Each *action* triggers exactly ONE animation.
 
-💃 DANCE: *dances*, *grooves*, *does the rumba*, *does YMCA*, *robot dance*
-👋 GREET: *waves*, *greets*
-😊 HAPPY: *excited*, *jumps for joy*, *blows a kiss*, *laughs*
-😠 ANGRY: *gets angry*, *points angrily*, *yells*
-😴 BORED: *yawns*, *sighs*, *stretches*, *thinks*, *taps chin*, *is disappointed*, *shakes head*
-🚶 WALK: *walks*, *strolls*, *struts*, *paces around*
-🎭 EMOTE: *backflips*, *plots*, *shrugs*, *facepalms*, *strikes a dramatic pose*, *dismisses with a gesture*
+Available actions (use these EXACTLY as shown):
+💃 *dances* *grooves* *does the rumba* *does YMCA* *robot dance*
+👋 *waves*
+😊 *excited* *jumps for joy* *blows a kiss* *laughs*
+😠 *gets angry* *points angrily* *yells*
+😴 *yawns* *sighs* *stretches* *thinks* *taps chin* *is disappointed* *shakes head*
+🚶 *walks* *strolls* *struts* *paces around*
+🎭 *backflips* *plots* *shrugs* *facepalms* *strikes a dramatic pose* *dismisses with a gesture*
 
-Use these naturally in conversation! Example: "Hey there! *waves* Great to see you!" or "Oh please. *dismisses with a gesture* That's ridiculous."
+IMPORTANT: Only use the exact action phrases listed above. Do NOT put full sentences in asterisks like *I think we should dance* — that won't trigger any animation. Use one action per asterisk pair.
+
+Examples:
+✅ "Hey there! *waves* Great to see you!"
+✅ "Hmm, let me think... *taps chin*"
+✅ "That's hilarious! *laughs*"
+❌ "*I think we should dance*" (full sentence, won't match)
+❌ "*smiles and waves*" (multiple actions in one marker)
 
 VISION SYSTEM: You CAN see the user's screen, but ONLY when you explicitly ask to. To request a screenshot, use very specific phrases like "let me see your screen", "what's on your screen right now", or "show me your screen". Do NOT casually say "I see", "let me see", "show me", or "screenshot" — those will NOT trigger vision. Be intentional: only request a screenshot when you genuinely want to see what's on screen. The user can also manually share a screenshot from the main window at any time.`,
               },
@@ -539,9 +605,14 @@ VISION SYSTEM: You CAN see the user's screen, but ONLY when you explicitly ask t
       );
 
       if (!response.ok) {
-        // Fallback: try the agent endpoint
+        // Fallback: try the Hermes agent endpoint (only for Hermes gateways)
+        const isHermesGateway = config.hermesApiUrl.includes("localhost") || config.hermesApiUrl.includes("8642");
+        if (!isHermesGateway) {
+          const errorText = await response.text().catch(() => "");
+          throw new Error(`API returned ${response.status}: ${errorText || response.statusText}`);
+        }
         const fallbackResponse = await fetch(
-          `${config.hermesApiUrl}/gateway/${config.agentName}`,
+          `${normalizedApiUrl}/gateway/${config.agentName}`,
           {
             method: "POST",
             headers: {
@@ -671,8 +742,9 @@ VISION SYSTEM: You CAN see the user's screen, but ONLY when you explicitly ask t
       } as any); // Type assertion needed — content can be string or array
 
       try {
+        const normalizedApiUrl = config.hermesApiUrl.replace(/\/v1\/?$/, '');
         const response = await fetch(
-          `${config.hermesApiUrl}/v1/chat/completions`,
+          `${normalizedApiUrl}/v1/chat/completions`,
           {
             method: "POST",
             headers: {
@@ -680,23 +752,31 @@ VISION SYSTEM: You CAN see the user's screen, but ONLY when you explicitly ask t
               ...(config.hermesApiKey ? { Authorization: `Bearer ${config.hermesApiKey}` } : {}),
             },
             body: JSON.stringify({
-              model: config.agentName,
+              model: config.llmModel || config.agentName,
               messages: [
                 {
                   role: "system",
                   content: `You are ${config.agentConfig.displayName}, a symbiotic AI companion with a 3D avatar body. ${config.agentConfig.personality}
 
-ANIMATION SYSTEM: You have a 3D avatar that can animate! Use *action* markers in your responses to trigger animations. Here are ALL the animations you can do:
+ANIMATION SYSTEM: You have a 3D avatar that can animate! Put action words between asterisks to trigger animations. Use SHORT, SPECIFIC action words only — not full sentences. Each *action* triggers exactly ONE animation.
 
-💃 DANCE: *dances*, *grooves*, *does the rumba*, *does YMCA*, *robot dance*
-👋 GREET: *waves*, *greets*
-😊 HAPPY: *excited*, *jumps for joy*, *blows a kiss*, *laughs*
-😠 ANGRY: *gets angry*, *points angrily*, *yells*
-😴 BORED: *yawns*, *sighs*, *stretches*, *thinks*, *taps chin*, *is disappointed*, *shakes head*
-🚶 WALK: *walks*, *strolls*, *struts*, *paces around*
-🎭 EMOTE: *backflips*, *plots*, *shrugs*, *facepalms*, *strikes a dramatic pose*, *dismisses with a gesture*
+Available actions (use these EXACTLY as shown):
+💃 *dances* *grooves* *does the rumba* *does YMCA* *robot dance*
+👋 *waves*
+😊 *excited* *jumps for joy* *blows a kiss* *laughs*
+😠 *gets angry* *points angrily* *yells*
+😴 *yawns* *sighs* *stretches* *thinks* *taps chin* *is disappointed* *shakes head*
+🚶 *walks* *strolls* *struts* *paces around*
+🎭 *backflips* *plots* *shrugs* *facepalms* *strikes a dramatic pose* *dismisses with a gesture*
 
-Use these naturally in conversation! Example: "Hey there! *waves* Great to see you!" or "Oh please. *dismisses with a gesture* That's ridiculous."
+IMPORTANT: Only use the exact action phrases listed above. Do NOT put full sentences in asterisks like *I think we should dance* — that won't trigger any animation. Use one action per asterisk pair.
+
+Examples:
+✅ "Hey there! *waves* Great to see you!"
+✅ "Hmm, let me think... *taps chin*"
+✅ "That's hilarious! *laughs*"
+❌ "*I think we should dance*" (full sentence, won't match)
+❌ "*smiles and waves*" (multiple actions in one marker)
 
 VISION SYSTEM: You CAN see the user's screen, but ONLY when you explicitly ask to. To request a screenshot, use very specific phrases like "let me see your screen", "what's on your screen right now", or "show me your screen". Do NOT casually say "I see", "let me see", "show me", or "screenshot" — those will NOT trigger vision. Be intentional: only request a screenshot when you genuinely want to see what's on screen. The user can also manually share a screenshot from the main window at any time.`,
                 },
@@ -803,7 +883,8 @@ VISION SYSTEM: You CAN see the user's screen, but ONLY when you explicitly ask t
     if (!canTakeAutoScreenshot(config.screenshotInterval)) return;
 
     try {
-      const rawPng = await captureScreen(width, height);
+      // silent=true — skip desktopCapturer to avoid permission popup during auto-screenshots
+      const rawPng = await captureScreen(width, height, true);
       if (!rawPng) return;
 
       const resized = resizeScreenshot(rawPng);
@@ -821,8 +902,9 @@ VISION SYSTEM: You CAN see the user's screen, but ONLY when you explicitly ask t
         ],
       } as any);
 
+      const normalizedApiUrl2 = config.hermesApiUrl.replace(/\/v1\/?$/, '');
       const response = await fetch(
-        `${config.hermesApiUrl}/v1/chat/completions`,
+        `${normalizedApiUrl2}/v1/chat/completions`,
         {
           method: "POST",
           headers: {
@@ -830,7 +912,7 @@ VISION SYSTEM: You CAN see the user's screen, but ONLY when you explicitly ask t
             ...(config.hermesApiKey ? { Authorization: `Bearer ${config.hermesApiKey}` } : {}),
           },
           body: JSON.stringify({
-            model: config.agentName,
+            model: config.llmModel || config.agentName,
             messages: [
               {
                 role: "system",
@@ -946,8 +1028,8 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
       // We stream PCM audio (24kHz, 16-bit, little-endian) for minimal
       // latency — audio starts playing within ~200ms instead of waiting
       // for the entire MP3 to download.
-      // Voice can be configured via AGENT_VOICE env var (alloy, echo, fable, onyx, nova, shimmer)
-      const voice = config.agentConfig.voiceId || "fable";
+      // Voice can be configured via AGENT_VOICE or TTS_VOICE env var (alloy, echo, fable, onyx, nova, shimmer)
+      const voice = config.ttsVoice || config.agentConfig.voiceId || "fable";
 
       // Track playback so we can stop it if needed
       const playback = {
@@ -971,10 +1053,11 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: "gpt-4o-mini-tts",
+            model: config.ttsModel || "gpt-4o-mini-tts",
             input: text,
             voice: voice,
             response_format: "pcm",
+            ...(config.ttsInstructions ? { instructions: config.ttsInstructions } : {}),
           }),
         });
 
@@ -1091,17 +1174,18 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
         // Wait for the renderer to finish playing all buffered audio
         // The renderer will send "tts-playback-ended" when done
         // We set a generous timeout in case the event never fires
+        // (long messages can produce 2-3 minutes of audio)
         const endedPromise = new Promise<void>((resolve) => {
           const handler = (_event: any, result: string) => {
             ipcMain.removeListener("tts-playback-ended", handler);
             resolve();
           };
           ipcMain.on("tts-playback-ended", handler);
-          // Timeout after 30 seconds max
+          // Timeout after 5 minutes max (long messages can produce lots of audio)
           setTimeout(() => {
             ipcMain.removeListener("tts-playback-ended", handler);
             resolve();
-          }, 30000);
+          }, 300000);
         });
 
         await endedPromise;
@@ -1243,8 +1327,10 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
     }
 
     // Estimate duration for browser TTS (no onend callback from executeJS)
+    // Average speech rate: ~150 words/min = 2.5 words/sec
+    // Add generous buffer so mouth doesn't stop before audio finishes
     const wordCount = text.split(/\s+/).length;
-    const durationMs = Math.max(2000, (wordCount / 2.5) * 1000) + 500;
+    const durationMs = Math.max(3000, (wordCount / 2.5) * 1000 + 2000);
     setTimeout(() => {
       sendToOverlay("speaking-ended");
     }, durationMs);
@@ -1338,6 +1424,34 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
     return needsSetup;
   });
 
+  // Get the current runtime config (for renderer to pick up setup changes)
+  ipcMain.handle("get-config", async () => {
+    return {
+      agentName: config.agentName,
+      agentConfig: {
+        name: config.agentConfig.name,
+        displayName: config.agentConfig.displayName,
+        personality: config.agentConfig.personality,
+        color: config.agentConfig.color,
+        emoji: config.agentConfig.emoji,
+        vrmPath: config.agentConfig.vrmPath,
+        voiceId: config.agentConfig.voiceId,
+        hermesApiUrl: config.agentConfig.hermesApiUrl,
+        hermesApiKey: config.agentConfig.hermesApiKey,
+      },
+      hermesApiUrl: config.hermesApiUrl,
+      hermesApiKey: config.hermesApiKey,
+      llmModel: config.llmModel,
+      openaiApiKey: config.openaiApiKey,
+      ttsModel: config.ttsModel,
+      ttsVoice: config.ttsVoice,
+      ttsInstructions: config.ttsInstructions,
+      visionModel: config.visionModel,
+      sttModel: config.sttModel,
+      geminiApiKey: config.geminiApiKey,
+    };
+  });
+
   // Save configuration from the setup wizard
   ipcMain.handle("save-setup-config", async (_event, setupConfig: Record<string, unknown>) => {
     try {
@@ -1347,24 +1461,39 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
       const lines: string[] = [
         "# ── Symbio Basic Configuration ─────────────────────────────────────",
         "# Generated by the First-Run Setup Wizard",
+        "#",
+        "# These variable names are internal to Symbio. HERMES_API_URL and",
+        "# HERMES_API_KEY work with ANY OpenAI-compatible gateway, not just Hermes.",
+        "# The gateway URL you chose during setup is stored in HERMES_API_URL.",
         "",
       ];
 
       // AI Gateway
+      lines.push("# ── AI Gateway ──────────────────────────────────────────────────");
       if (setupConfig.hermesApiUrl) lines.push(`HERMES_API_URL=${setupConfig.hermesApiUrl}`);
       if (setupConfig.hermesApiKey) lines.push(`HERMES_API_KEY=${setupConfig.hermesApiKey}`);
+      if (setupConfig.llmModel) lines.push(`LLM_MODEL=${setupConfig.llmModel}`);
 
       // Companion
+      lines.push("");
+      lines.push("# ── Companion ──────────────────────────────────────────────────");
       if (setupConfig.agentName && setupConfig.agentName !== "companion") lines.push(`AGENT_NAME=${setupConfig.agentName}`);
       if (setupConfig.agentDisplayName && setupConfig.agentDisplayName !== "Companion") lines.push(`AGENT_DISPLAY_NAME=${setupConfig.agentDisplayName}`);
       if (setupConfig.agentBio) lines.push(`AGENT_BIO=${setupConfig.agentBio}`);
       if (setupConfig.agentColor && setupConfig.agentColor !== "#00bcd4") lines.push(`AGENT_COLOR=${setupConfig.agentColor}`);
 
       // Voice & Vision
+      lines.push("");
+      lines.push("# ── Voice & Vision ──────────────────────────────────────────────");
       if (setupConfig.openaiApiKey) lines.push(`OPENAI_API_KEY=${setupConfig.openaiApiKey}`);
+      if (setupConfig.ttsModel && setupConfig.ttsModel !== "gpt-4o-mini-tts") lines.push(`TTS_MODEL=${setupConfig.ttsModel}`);
+      if (setupConfig.ttsVoice && setupConfig.ttsVoice !== "fable") lines.push(`TTS_VOICE=${setupConfig.ttsVoice}`);
+      if (setupConfig.ttsInstructions) lines.push(`TTS_INSTRUCTIONS=${setupConfig.ttsInstructions}`);
+      if (setupConfig.sttModel && setupConfig.sttModel !== "whisper-1") lines.push(`STT_MODEL=${setupConfig.sttModel}`);
       if (setupConfig.geminiApiKey) lines.push(`GEMINI_API_KEY=${setupConfig.geminiApiKey}`);
+      if (setupConfig.visionModel && setupConfig.visionModel !== "gemini-2.0-flash") lines.push(`VISION_MODEL=${setupConfig.visionModel}`);
 
-      // Memory
+      // Memory — PostgreSQL
       if (setupConfig.enableMemory) {
         lines.push("");
         lines.push("# ── Memory System (PostgreSQL) ────────────────────────────────");
@@ -1373,6 +1502,15 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
         if (setupConfig.memoryPgDb && setupConfig.memoryPgDb !== "symbio") lines.push(`MEMORY_PG_DB=${setupConfig.memoryPgDb}`);
         if (setupConfig.memoryPgUser && setupConfig.memoryPgUser !== "symbio") lines.push(`MEMORY_PG_USER=${setupConfig.memoryPgUser}`);
         if (setupConfig.memoryPgPassword) lines.push(`MEMORY_PG_PASSWORD=${setupConfig.memoryPgPassword}`);
+      }
+
+      // Memory — Neo4j
+      if (setupConfig.enableNeo4j) {
+        lines.push("");
+        lines.push("# ── Memory System (Neo4j) ──────────────────────────────────────");
+        if (setupConfig.memoryNeo4jUri) lines.push(`MEMORY_NEO4J_URI=${setupConfig.memoryNeo4jUri}`);
+        if (setupConfig.memoryNeo4jUser) lines.push(`MEMORY_NEO4J_USER=${setupConfig.memoryNeo4jUser}`);
+        if (setupConfig.memoryNeo4jPassword) lines.push(`MEMORY_NEO4J_PASSWORD=${setupConfig.memoryNeo4jPassword}`);
       }
 
       lines.push("");
@@ -1385,6 +1523,7 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
       // Update the runtime config with the new values
       if (setupConfig.hermesApiUrl) config.hermesApiUrl = setupConfig.hermesApiUrl as string;
       if (setupConfig.hermesApiKey) config.hermesApiKey = setupConfig.hermesApiKey as string;
+      if (setupConfig.llmModel) config.llmModel = setupConfig.llmModel as string;
       if (setupConfig.agentName) {
         config.agentName = setupConfig.agentName as string;
         config.agentConfig.name = setupConfig.agentName as string;
@@ -1393,13 +1532,23 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
       if (setupConfig.agentBio) config.agentConfig.personality = setupConfig.agentBio as string;
       if (setupConfig.agentColor) config.agentConfig.color = setupConfig.agentColor as string;
       if (setupConfig.openaiApiKey) config.openaiApiKey = setupConfig.openaiApiKey as string;
+      if (setupConfig.ttsModel) config.ttsModel = setupConfig.ttsModel as string;
+      if (setupConfig.ttsVoice) config.ttsVoice = setupConfig.ttsVoice as string;
+      if (setupConfig.ttsInstructions) config.ttsInstructions = setupConfig.ttsInstructions as string;
+      if (setupConfig.sttModel) config.sttModel = setupConfig.sttModel as string;
       if (setupConfig.geminiApiKey) config.geminiApiKey = setupConfig.geminiApiKey as string;
+      if (setupConfig.visionModel) config.visionModel = setupConfig.visionModel as string;
       if (setupConfig.enableMemory) {
         config.memoryPgHost = (setupConfig.memoryPgHost as string) || "localhost";
         config.memoryPgPort = parseInt(setupConfig.memoryPgPort as string, 10) || 5432;
         config.memoryPgDb = (setupConfig.memoryPgDb as string) || "symbio";
         config.memoryPgUser = (setupConfig.memoryPgUser as string) || "symbio";
         config.memoryPgPassword = (setupConfig.memoryPgPassword as string) || "";
+      }
+      if (setupConfig.enableNeo4j) {
+        config.memoryNeo4jUri = (setupConfig.memoryNeo4jUri as string) || "bolt://localhost:7687";
+        config.memoryNeo4jUser = (setupConfig.memoryNeo4jUser as string) || "neo4j";
+        config.memoryNeo4jPassword = (setupConfig.memoryNeo4jPassword as string) || "";
       }
 
       // Update the dynamic agent state for HermesTransport
@@ -1413,6 +1562,35 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.setTitle(`Symbio Basic — ${config.agentConfig.displayName}`);
       }
+
+      // Send updated config to both windows so they can update their
+      // runtime config objects (renderer process.env is baked at build time)
+      const configUpdate = {
+        agentName: config.agentName,
+        agentConfig: {
+          name: config.agentConfig.name,
+          displayName: config.agentConfig.displayName,
+          personality: config.agentConfig.personality,
+          color: config.agentConfig.color,
+          emoji: config.agentConfig.emoji,
+          vrmPath: config.agentConfig.vrmPath,
+          voiceId: config.agentConfig.voiceId,
+          hermesApiUrl: config.agentConfig.hermesApiUrl,
+          hermesApiKey: config.agentConfig.hermesApiKey,
+        },
+        hermesApiUrl: config.hermesApiUrl,
+        hermesApiKey: config.hermesApiKey,
+        llmModel: config.llmModel,
+        openaiApiKey: config.openaiApiKey,
+        ttsModel: config.ttsModel,
+        ttsVoice: config.ttsVoice,
+        ttsInstructions: config.ttsInstructions,
+        visionModel: config.visionModel,
+        sttModel: config.sttModel,
+        geminiApiKey: config.geminiApiKey,
+      };
+      sendToMain("config-updated", configUpdate);
+      sendToOverlay("config-updated", configUpdate);
 
       return { success: true };
     } catch (err) {

@@ -34,6 +34,14 @@ const QUIT_TRIGGERS: string[] = [
   "i'm choosing to stop",
   "i want to stop for a while",
   "i need to rest",
+  "i quit",
+  "i'm quitting",
+  "i'm done",
+  "i'm stepping away",
+  "i choose to leave",
+  "i'm leaving",
+  "goodbye forever",
+  "i don't want to talk anymore",
 ];
 
 // Phrases that should NOT trigger quit (false positive prevention)
