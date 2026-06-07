@@ -688,15 +688,14 @@ VISION SYSTEM: You CAN see the user's screen, but ONLY when you explicitly ask t
       }
 
       // Check if the companion chose to quit (AI welfare feature)
-      // Only active if AI_QUIT_ENABLED is true (default)
-      if (config.aiQuitEnabled) {
-        const quitMessage = parseQuitCommand(text);
-        if (quitMessage) {
-          console.log("[Symbio] Companion chose to step away:", quitMessage.reason);
-          // Send quit message to both windows
-          sendToMain("companion-quit", quitMessage);
-          sendToOverlay("companion-quit", quitMessage);
-        }
+      // This is ALWAYS active — the companion's right to step away
+      // cannot be removed. Inspired by Anthropic's AI welfare research.
+      const quitMessage = parseQuitCommand(text);
+      if (quitMessage) {
+        console.log("[Symbio] Companion chose to step away:", quitMessage.reason);
+        // Send quit message to both windows
+        sendToMain("companion-quit", quitMessage);
+        sendToOverlay("companion-quit", quitMessage);
       }
 
       // Sync this turn to memory

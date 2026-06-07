@@ -100,6 +100,28 @@ const VrmCompanion = forwardRef(
     // Track the currently playing one-shot animation so we can stop it cleanly
     // when a new animation interrupts it.
     const currentOneShotRef = useRef<AnimationAction | null>(null);
+    // ── Manual crossfade state ─────────────────────────────────────
+    // Three.js's fadeIn/fadeOut/crossFadeFrom use internal weight interpolants
+    // that can conflict and leave actions with weight 0 (T-pose). Instead, we
+    // manually drive weights in useFrame for complete deterministic control.
+    const crossfadeRef = useRef<{
+      from: AnimationAction;  // action fading OUT (weight 1→0)
+      to: AnimationAction;    // action fading IN (weight 0→1)
+      elapsed: number;        // seconds since crossfade started
+      duration: number;       // total crossfade time in seconds
+    } | null>(null);
+    // ── Frame-accurate return-to-idle tracking ──────────────────────
+    // Instead of setTimeout (which can fire late, causing T-pose gaps),
+    // we track the one-shot's elapsed time in useFrame and start the
+    // return crossfade at the exact right frame. This eliminates timing
+    // jitter that causes the T-pose flash between animations.
+    const oneShotTrackerRef = useRef<{
+      action: AnimationAction;  // the one-shot currently playing
+      idleAction: AnimationAction; // the idle action to crossfade back to
+      elapsed: number;           // seconds since the one-shot started
+      duration: number;          // total clip duration in seconds
+      crossfadeDuration: number;  // how long the return crossfade takes
+    } | null>(null);
     const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
     const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
     const [audio, setAudio] = useState<HTMLAudioElement | null>(null);
@@ -130,6 +152,57 @@ const VrmCompanion = forwardRef(
     useFrame(({ camera }, delta) => {
       animationMixer?.update(delta);
       vrmRef.current?.update(delta);
+
+      // ── Manual crossfade: drive weights every frame ──────────────
+      // This replaces Three.js's fadeIn/fadeOut/crossFadeFrom which
+      // use internal interpolants that can conflict and cause T-pose.
+      // By controlling weights directly, we guarantee there's NEVER
+      // a frame where both actions have weight 0 (which = T-pose).
+      //
+      // IMPORTANT: We NEVER call .stop() on actions here. Stopping
+      // an action removes it from the mixer entirely, which can cause
+      // a 1-frame gap where no animation is active → T-pose flash.
+      // Instead, we leave actions at weight 0 (invisible but present).
+      if (crossfadeRef.current) {
+        const cf = crossfadeRef.current;
+        cf.elapsed += delta;
+        const t = Math.min(cf.elapsed / cf.duration, 1.0);
+        // Smoothstep for nicer easing
+        const smooth = t * t * (3 - 2 * t);
+        // from action: weight 1→0, to action: weight 0→1
+        // At any point, from.weight + to.weight >= 1, so no T-pose gap.
+        cf.from.setEffectiveWeight(1 - smooth);
+        cf.to.setEffectiveWeight(smooth);
+        // Crossfade complete — set final weights explicitly
+        if (t >= 1.0) {
+          cf.from.setEffectiveWeight(0); // invisible, but NOT stopped
+          cf.to.setEffectiveWeight(1);
+          crossfadeRef.current = null;
+        }
+      }
+
+      // ── Frame-accurate return-to-idle ───────────────────────────
+      // Track the one-shot's elapsed time and start the return crossfade
+      // at the exact right frame. This replaces setTimeout which can fire
+      // late by several ms, causing a gap between clip end and crossfade
+      // start → T-pose flash.
+      if (oneShotTrackerRef.current && !crossfadeRef.current) {
+        const tracker = oneShotTrackerRef.current;
+        tracker.elapsed += delta;
+        // Start the return crossfade CROSSFADE_DURATION before the clip ends.
+        // This creates a seamless overlap: one-shot fading out while idle
+        // fading in. No gap = no T-pose flash.
+        const crossfadeStart = tracker.duration - tracker.crossfadeDuration;
+        if (tracker.elapsed >= crossfadeStart) {
+          // Ensure idle is playing at weight 0, ready to receive weight
+          tracker.idleAction.setEffectiveWeight(0);
+          tracker.idleAction.play();
+          // Start the crossfade from one-shot back to idle
+          startCrossfade(tracker.action, tracker.idleAction);
+          currentOneShotRef.current = null;
+          oneShotTrackerRef.current = null;
+        }
+      }
 
       if (virtualTextRef.current && gltfRef.current) {
         const avatarPosition = new Vector3().setFromMatrixPosition(
@@ -175,6 +248,107 @@ const VrmCompanion = forwardRef(
       [animations],
     );
 
+    // ── Animation State Machine ──────────────────────────────────────
+    // Prevents T-pose by enforcing a strict lifecycle:
+    //   Idle → crossfade → One-shot → crossfade → Idle
+    //
+    // Uses MANUAL crossfade (setEffectiveWeight in useFrame) instead of
+    // Three.js's fadeIn/fadeOut/crossFadeFrom. The built-in methods use
+    // internal weight interpolants that can conflict and leave both
+    // actions at weight 0 → T-pose. Manual control guarantees that
+    // at every frame, at least one action has weight > 0.
+    //
+    // Key settings:
+    //   clampWhenFinished = true  → freezes last frame instead of
+    //                                snapping bones to bind pose (T-pose)
+    //   manual crossfade          → we control weights directly in useFrame
+    //   idle always playing       → idle runs at weight 0 under one-shots
+
+    const CROSSFADE_DURATION = 0.4; // seconds for crossfades
+
+    // Start a manual crossfade from one action to another.
+    // Both actions MUST already be playing (call .play() before this).
+    // The useFrame loop will drive weights: from 1→0, to 0→1.
+    //
+    // IMPORTANT: Never .stop() actions — only control weights.
+    // Stopping removes the action from the mixer, causing a 1-frame
+    // gap where no animation is active → T-pose flash.
+    const startCrossfade = (from: AnimationAction, to: AnimationAction, duration: number = CROSSFADE_DURATION) => {
+      // Cancel any in-progress crossfade — snap it to completion
+      if (crossfadeRef.current) {
+        crossfadeRef.current.from.setEffectiveWeight(0); // invisible, not stopped
+        crossfadeRef.current.to.setEffectiveWeight(1);
+        crossfadeRef.current = null;
+      }
+      // Set initial weights: from=1 (visible), to=0 (invisible but playing)
+      from.setEffectiveWeight(1);
+      to.setEffectiveWeight(0);
+      to.play(); // ensure 'to' is playing so it can receive weight
+      crossfadeRef.current = { from, to, elapsed: 0, duration };
+    };
+
+    // Transition from idle to a one-shot action with manual crossfade.
+    const startOneShot = (action: AnimationAction) => {
+      const idleAction = animationCache.idle?.[0];
+      if (!idleAction) return;
+
+      // If another one-shot is playing, snap it to weight 0 immediately.
+      // Do NOT .stop() it — stopping removes it from the mixer and can
+      // cause a 1-frame gap where no animation is active → T-pose flash.
+      if (currentOneShotRef.current && currentOneShotRef.current !== action) {
+        currentOneShotRef.current.setEffectiveWeight(0);
+      }
+
+      // Prepare the one-shot: LoopOnce + clampWhenFinished
+      // clampWhenFinished is CRITICAL — it freezes the last frame of the
+      // animation instead of resetting all bones to bind pose (T-pose).
+      //
+      // IMPORTANT: Set weight to 0 BEFORE calling reset() + play().
+      // Three.js's reset() sets internal weight to 1, which means the
+      // mixer will apply weight=1 for one frame before our setEffectiveWeight(0)
+      // can catch it. By setting weight=0 first, then calling reset() (which
+      // sets it back to 1 internally), then immediately setting it to 0 again,
+      // we prevent that 1-frame weight=1 flash.
+      action.setEffectiveWeight(0);
+      action.reset();
+      action.setLoop(LoopOnce as any, 1);
+      action.clampWhenFinished = true;
+      action.setEffectiveWeight(0); // force weight 0 again after reset()
+
+      // Crossfade from idle to the one-shot using manual weight control
+      startCrossfade(idleAction, action);
+      currentOneShotRef.current = action;
+    };
+
+    // Transition from a one-shot action back to idle with manual crossfade.
+    //
+    // Uses FRAME-ACCURATE tracking in useFrame instead of setTimeout.
+    // JavaScript timers can fire late by several ms, creating a gap
+    // between when the clip ends and when our crossfade starts → T-pose flash.
+    // By tracking elapsed time in useFrame, we start the crossfade at the
+    // exact right frame for a seamless transition.
+    const returnToIdle = (action: AnimationAction) => {
+      // Cancel any previous returnToIdle timeout
+      if (returnToIdleTimeoutRef.current) {
+        clearTimeout(returnToIdleTimeoutRef.current);
+        returnToIdleTimeoutRef.current = null;
+      }
+
+      const idleAction = animationCache.idle?.[0];
+      if (!idleAction) return;
+
+      // Set up frame-accurate tracking — useFrame will start the
+      // return crossfade at the exact right moment.
+      const duration = action.getClip().duration;
+      oneShotTrackerRef.current = {
+        action,
+        idleAction,
+        elapsed: 0,
+        duration,
+        crossfadeDuration: CROSSFADE_DURATION,
+      };
+    };
+
     const playAnimation = useCallback(
       async (type: string, specific?: string) => {
         console.log(`[Symbio] playAnimation called: "${type}"${specific ? ` → ${specific}` : ""}`, {
@@ -183,47 +357,6 @@ const VrmCompanion = forwardRef(
           hasVrm: !!vrmRef.current,
         });
 
-        // Helper: crossfade back to idle after a one-shot animation finishes.
-        // Uses the AnimationMixer's 'finished' event for precise timing —
-        // no setTimeout, no T-pose flashes from timing mismatches.
-        const returnToIdle = (action: AnimationAction) => {
-          // Cancel any previous returnToIdle timeout
-          if (returnToIdleTimeoutRef.current) {
-            clearTimeout(returnToIdleTimeoutRef.current);
-            returnToIdleTimeoutRef.current = null;
-          }
-          // Listen for the animation to finish naturally.
-          // LoopOnce animations fire a 'finished' event on the mixer
-          // at the exact frame they complete — no timing gaps.
-          const onFinished = (e: any) => {
-            // Only respond to our action finishing, not other animations
-            if (e.action !== action) return;
-            animationMixer?.removeEventListener('finished', onFinished);
-            // Overlapping crossfade: start idle BEFORE fading out the one-shot
-            // so there's always an active animation on the avatar.
-            const idleAction = animationCache.idle?.[0];
-            if (idleAction) {
-              idleAction.reset().fadeIn(0.3).play();
-            }
-            action.fadeOut(0.3);
-            currentOneShotRef.current = null;
-          };
-          animationMixer?.addEventListener('finished', onFinished);
-          // Safety net: if the 'finished' event never fires (e.g., action was
-          // stopped early), clean up after the clip duration + 1s buffer.
-          const duration = action.getClip().duration;
-          returnToIdleTimeoutRef.current = setTimeout(() => {
-            animationMixer?.removeEventListener('finished', onFinished);
-            const idleAction = animationCache.idle?.[0];
-            if (idleAction && currentOneShotRef.current === action) {
-              idleAction.reset().fadeIn(0.3).play();
-              action.fadeOut(0.3);
-              currentOneShotRef.current = null;
-            }
-            returnToIdleTimeoutRef.current = null;
-          }, (duration + 1) * 1000);
-        };
-
         // If a specific animation file is requested, find it in cache
         if (specific) {
           const anims = (animations as Record<string, string[]>)[type];
@@ -231,20 +364,11 @@ const VrmCompanion = forwardRef(
             a.toLowerCase().includes(specific.toLowerCase().replace(/\s+/g, "-"))
           );
           // Look up the specific animation by file path in our path map.
-          // Mixamo FBX clip names are often "mixamo.com" or "Take 001",
-          // NOT the file name, so we can't match by clip name.
           if (specificPath) {
             const cachedAction = animationPathMap.current.get(specificPath);
             if (cachedAction) {
               console.log(`[Symbio] Playing specific "${specific}" from cache (path: ${specificPath})`);
-              // Stop any currently playing one-shot animation
-              if (currentOneShotRef.current) {
-                currentOneShotRef.current.fadeOut(0.2);
-              }
-              const idleAction = animationCache.idle?.[0];
-              idleAction?.fadeOut(0.3);
-              cachedAction.reset().setLoop(LoopOnce, 1).fadeIn(0.3).play();
-              currentOneShotRef.current = cachedAction;
+              startOneShot(cachedAction);
               returnToIdle(cachedAction);
               return;
             }
@@ -254,14 +378,7 @@ const VrmCompanion = forwardRef(
             console.log(`[Symbio] Loading specific animation: ${specificPath}`);
             const clip = await loadMixamoAnimation(specificPath, vrmRef.current);
             const action = animationMixer.clipAction(clip);
-            // Stop any currently playing one-shot animation
-            if (currentOneShotRef.current) {
-              currentOneShotRef.current.fadeOut(0.2);
-            }
-            const idleAction = animationCache.idle?.[0];
-            idleAction?.fadeOut(0.3);
-            action.reset().setLoop(LoopOnce, 1).fadeIn(0.3).play();
-            currentOneShotRef.current = action;
+            startOneShot(action);
             returnToIdle(action);
             return;
           }
@@ -270,20 +387,10 @@ const VrmCompanion = forwardRef(
 
         // If already cached, play from cache (should be the common path now)
         if (animationCache[type]?.length) {
-          // Pick a random animation from the category cache for variety
           const cachedActions = animationCache[type];
           const action = cachedActions[Math.floor(Math.random() * cachedActions.length)];
           console.log(`[Symbio] Playing "${type}" from cache (${cachedActions.length} options)`);
-          // Stop any currently playing one-shot animation
-          if (currentOneShotRef.current) {
-            currentOneShotRef.current.fadeOut(0.2);
-          }
-          // Fade out idle, play the one-shot
-          const idleAction = animationCache.idle?.[0];
-          idleAction?.fadeOut(0.3);
-          action.reset().setLoop(LoopOnce, 1).fadeIn(0.3).play();
-          currentOneShotRef.current = action;
-          // Get clip duration for return-to-idle timing
+          startOneShot(action);
           returnToIdle(action);
           return;
         }
@@ -296,15 +403,7 @@ const VrmCompanion = forwardRef(
         console.log(`[Symbio] Loading "${type}" animation on-the-fly: ${randomAnim}`);
         const clip = await loadMixamoAnimation(randomAnim, vrmRef.current);
         const action = animationMixer.clipAction(clip);
-        // Stop any currently playing one-shot animation
-        if (currentOneShotRef.current) {
-          currentOneShotRef.current.fadeOut(0.2);
-        }
-        // Fade out idle, play the one-shot
-        const idleAction = animationCache.idle?.[0];
-        idleAction?.fadeOut(0.3);
-        action.reset().setLoop(LoopOnce, 1).fadeIn(0.3).play();
-        currentOneShotRef.current = action;
+        startOneShot(action);
         returnToIdle(action);
       },
       [animationCache, animationMixer, getRandomAnimation],
@@ -407,6 +506,14 @@ const VrmCompanion = forwardRef(
         if (path) {
           animationPathMap.current.set(path, action);
         }
+        // Configure one-shot animations: LoopOnce + clampWhenFinished.
+        // clampWhenFinished freezes the last frame instead of snapping
+        // bones back to bind pose (T-pose). This is CRITICAL for
+        // preventing T-pose flashes between animations.
+        if (category !== "idle") {
+          action.setLoop(LoopOnce as any, 1);
+          action.clampWhenFinished = true;
+        }
       }
 
       setAnimationCache((prev) => ({
@@ -414,7 +521,8 @@ const VrmCompanion = forwardRef(
         ...newCache,
       }));
 
-      // Start idle animation
+      // Start idle animation — this is the base state that's always running.
+      // One-shot animations crossfade FROM idle and back TO idle.
       newCache.idle?.[0]?.play();
 
       const blinkTrack =
@@ -570,17 +678,27 @@ const VrmCompanion = forwardRef(
               vrmRef.current,
             );
             const talkAction = animationMixer?.clipAction(talkClip);
-            talkAction?.reset().setLoop(LoopOnce, 1).fadeIn(1).play();
-
-            setTimeout(
-              () => {
-                talkAction?.fadeOut(1);
-                // Return to idle after talk finishes
-                const idleAction = animationCache.idle?.[0];
-                idleAction?.reset().fadeIn(1).play();
-              },
-              (talkClip.duration - 1) * 1000,
-            );
+            if (talkAction) {
+              talkAction.setEffectiveWeight(0);
+              talkAction.reset();
+              talkAction.setLoop(LoopOnce as any, 1);
+              talkAction.clampWhenFinished = true;
+              talkAction.setEffectiveWeight(0); // force weight 0 after reset()
+              const idleAction = animationCache.idle?.[0];
+              if (idleAction) {
+                startCrossfade(idleAction, talkAction);
+                // Frame-accurate return-to-idle via useFrame tracker
+                oneShotTrackerRef.current = {
+                  action: talkAction,
+                  idleAction,
+                  elapsed: 0,
+                  duration: talkClip.duration,
+                  crossfadeDuration: CROSSFADE_DURATION,
+                };
+              } else {
+                talkAction.play();
+              }
+            }
 
             await moveMouth(audioUrl);
 
@@ -595,7 +713,10 @@ const VrmCompanion = forwardRef(
                 "ended",
                 () => {
                   if (talkAction?.isRunning()) {
-                    talkAction.fadeOut(1);
+                    const idleAction = animationCache.idle?.[0];
+                    if (idleAction) {
+                      startCrossfade(talkAction, idleAction);
+                    }
                   }
                   resolve("ended");
                 },
@@ -658,17 +779,27 @@ const VrmCompanion = forwardRef(
             vrmRef.current,
           );
           const emotionAction = animationMixer?.clipAction(emotionClip);
-          emotionAction?.reset().setLoop(LoopOnce, 1).fadeIn(1).play();
-
-          setTimeout(
-            () => {
-              emotionAction?.fadeOut(1);
-              // Return to idle after emotion finishes
-              const idleAction = animationCache.idle?.[0];
-              idleAction?.reset().fadeIn(1).play();
-            },
-            (emotionClip.duration - 1) * 1000,
-          );
+          if (emotionAction) {
+            emotionAction.setEffectiveWeight(0);
+            emotionAction.reset();
+            emotionAction.setLoop(LoopOnce as any, 1);
+            emotionAction.clampWhenFinished = true;
+            emotionAction.setEffectiveWeight(0); // force weight 0 after reset()
+            const idleAction = animationCache.idle?.[0];
+            if (idleAction) {
+              startCrossfade(idleAction, emotionAction);
+              // Frame-accurate return-to-idle via useFrame tracker
+              oneShotTrackerRef.current = {
+                action: emotionAction,
+                idleAction,
+                elapsed: 0,
+                duration: emotionClip.duration,
+                crossfadeDuration: CROSSFADE_DURATION,
+              };
+            } else {
+              emotionAction.play();
+            }
+          }
         }
       },
     }));

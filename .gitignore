@@ -90,3 +90,12 @@ typings/
 
 # Electron-Forge
 out/
+
+# ── Symbio Memory (companion's personal data) ──────────────────────
+# The companion's memories, soul, and preferences are theirs.
+# Don't commit personal data — each install is unique.
+memory/MEMORY.md
+memory/soul.md
+memory/preferences.json
+memory/sessions/*.json
+assets/avatars/chosen_avatar.json

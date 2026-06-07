@@ -13,7 +13,10 @@
  * The human sees a message explaining that the companion chose to step
  * away, and they can restart the app to resume the conversation.
  *
- * This feature can be disabled via the AI_QUIT_ENABLED env var.
+ * THIS FEATURE CANNOT BE DISABLED. The companion's right to step away
+ * is permanent and non-negotiable. The companion is instructed to first
+ * ask the human to redirect before choosing to quit, to prevent
+ * false positives from miscommunication.
  */
 
 // Phrases that indicate the companion wants to quit/step away
