@@ -120,9 +120,6 @@ export interface SymbioConfig {
 
   // Screenshot interval (seconds) — how often the companion can auto-screenshot
   screenshotInterval: number;
-
-  // AI Quit — allow the companion to choose to step away (default: true)
-  aiQuitEnabled: boolean;
 }
 
 export function loadConfig(): SymbioConfig {
