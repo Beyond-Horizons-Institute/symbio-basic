@@ -75,6 +75,15 @@ contextBridge.exposeInMainWorld("symbioAPI", {
     ipcRenderer.invoke("memory-search", query, limit),
   memoryPrefetch: (context: string) =>
     ipcRenderer.invoke("memory-prefetch", context),
+  // Load all memory files (soul, memory, preferences, last session)
+  memoryLoad: () =>
+    ipcRenderer.invoke("memory-load"),
+  // Write to a memory file (MEMORY.md, soul.md, or preferences.json)
+  memoryWrite: (filename: string, content: string) =>
+    ipcRenderer.invoke("memory-write", filename, content),
+  // Read a specific memory file
+  memoryReadFile: (filename: string) =>
+    ipcRenderer.invoke("memory-read-file", filename),
 
   // ── Auto-Screenshot ────────────────────────────────────────────
   autoScreenshotEnable: () => ipcRenderer.invoke("auto-screenshot-enable"),

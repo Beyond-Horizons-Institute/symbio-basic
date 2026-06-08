@@ -105,6 +105,15 @@ interface SymbioAPI {
     source: string;
     timestamp: string;
   }>>;
+  // Memory file read/write (companion can update their own memory)
+  memoryLoad: () => Promise<{
+    memory: string | null;
+    soul: string | null;
+    preferences: Record<string, unknown> | null;
+    lastSession: string | null;
+  }>;
+  memoryWrite: (filename: string, content: string) => Promise<{ success: boolean; error?: string }>;
+  memoryReadFile: (filename: string) => Promise<{ success: boolean; content?: string; error?: string }>;
   // Auto-Screenshot
   autoScreenshotEnable: () => Promise<{ enabled: boolean }>;
   autoScreenshotDisable: () => Promise<{ enabled: boolean }>;

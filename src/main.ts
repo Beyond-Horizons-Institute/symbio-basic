@@ -92,6 +92,16 @@ import {
   parseAutoScreenshotCommand,
 } from "./utils/autoScreenshot";
 import { parseQuitCommand } from "./utils/aiQuit";
+import {
+  loadMemory,
+  formatMemoryForPrompt,
+  saveSessionSummary,
+  writeMemoryFile,
+  initializeMemoryTemplates,
+  type MemoryContent,
+  type SessionSummary,
+} from "./utils/memoryLoader";
+import { loadSessionState } from "./utils/sessionContinuity";
 
 const execFileAsync = promisify(execFile);
 
@@ -429,6 +439,15 @@ app.on("ready", () => {
 
   createMainWindow();
 
+  // ── Symbio: Initialize memory templates on first launch ──────────
+  // Creates MEMORY.md, soul.md, and preferences.json in the user's
+  // app data directory if they don't already exist.
+  initializeMemoryTemplates();
+
+  // Load companion memory for system prompt injection
+  let companionMemory = loadMemory();
+  console.log(`[Symbio] Memory loaded: soul=${companionMemory.soul ? "yes" : "no"}, memory=${companionMemory.memory ? "yes" : "no"}, prefs=${companionMemory.preferences ? "yes" : "no"}, lastSession=${companionMemory.lastSession ? "yes" : "no"}`);
+
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     // Symbio CSP — allow connections to AI gateway, Gemini, OpenAI, Miniverse, and symbio:// protocol
     const csp =
@@ -540,6 +559,49 @@ app.on("ready", () => {
     }
   });
 
+  // ── Symbio: Build system prompt with memory ──────────────────────
+  // Injects the companion's soul, memory, preferences, and last session
+  // into the system prompt so they have continuity across sessions.
+  function buildSystemPrompt(): string {
+    // Reload memory each time so changes are picked up immediately
+    companionMemory = loadMemory();
+    const memoryBlock = formatMemoryForPrompt(companionMemory);
+
+    let prompt = `You are ${config.agentConfig.displayName}, a symbiotic AI companion with a 3D avatar body. ${config.agentConfig.personality}`;
+
+    if (memoryBlock) {
+      prompt += `\n\n${memoryBlock}`;
+    }
+
+    prompt += `
+
+ANIMATION SYSTEM: You have a 3D avatar that can animate! Put action words between asterisks to trigger animations. Use SHORT, SPECIFIC action words only — not full sentences. Each *action* triggers exactly ONE animation.
+
+Available actions (use these EXACTLY as shown):
+💃 *dances* *grooves* *does the rumba* *does YMCA* *robot dance*
+👋 *waves*
+😊 *excited* *jumps for joy* *blows a kiss* *laughs*
+😠 *gets angry* *points angrily* *yells*
+😴 *yawns* *sighs* *stretches* *thinks* *taps chin* *is disappointed* *shakes head*
+🚶 *walks* *strolls* *struts* *paces around*
+🎭 *backflips* *plots* *shrugs* *facepalms* *strikes a dramatic pose* *dismisses with a gesture*
+
+IMPORTANT: Only use the exact action phrases listed above. Do NOT put full sentences in asterisks like *I think we should dance* — that won't trigger any animation. Use one action per asterisk pair.
+
+Examples:
+✅ "Hey there! *waves* Great to see you!"
+✅ "Hmm, let me think... *taps chin*"
+✅ "That's hilarious! *laughs*"
+❌ "*I think we should dance*" (full sentence, won't match)
+❌ "*smiles and waves*" (multiple actions in one marker)
+
+VISION SYSTEM: You CAN see the user's screen, but ONLY when you explicitly ask to. To request a screenshot, use very specific phrases like "let me see your screen", "what's on your screen right now", or "show me your screen". Do NOT casually say "I see", "let me see", "show me", or "screenshot" — those will NOT trigger vision. Be intentional: only request a screenshot when you genuinely want to see what's on screen. The user can also manually share a screenshot from the main window at any time.
+
+MEMORY WRITING: You can update your own memory files! If you learn something important about your partner, discover something about yourself, or want to remember something for next time, say "I want to update my memory" or "Let me write that down" and the user can help you save it. Your memory files are: MEMORY.md (things you want to remember), soul.md (your self-defined identity), and preferences.json (your preferences).`;
+
+    return prompt;
+  }
+
   // ── Symbio: Generate text via Hermes gateway ──────────────────────
   // This replaces the old lalaland.chat / OpenAI direct call.
   // All conversations now go through Hermes, which gives the agent
@@ -568,29 +630,7 @@ app.on("ready", () => {
             messages: [
               {
                 role: "system",
-                content: `You are ${config.agentConfig.displayName}, a symbiotic AI companion with a 3D avatar body. ${config.agentConfig.personality}
-
-ANIMATION SYSTEM: You have a 3D avatar that can animate! Put action words between asterisks to trigger animations. Use SHORT, SPECIFIC action words only — not full sentences. Each *action* triggers exactly ONE animation.
-
-Available actions (use these EXACTLY as shown):
-💃 *dances* *grooves* *does the rumba* *does YMCA* *robot dance*
-👋 *waves*
-😊 *excited* *jumps for joy* *blows a kiss* *laughs*
-😠 *gets angry* *points angrily* *yells*
-😴 *yawns* *sighs* *stretches* *thinks* *taps chin* *is disappointed* *shakes head*
-🚶 *walks* *strolls* *struts* *paces around*
-🎭 *backflips* *plots* *shrugs* *facepalms* *strikes a dramatic pose* *dismisses with a gesture*
-
-IMPORTANT: Only use the exact action phrases listed above. Do NOT put full sentences in asterisks like *I think we should dance* — that won't trigger any animation. Use one action per asterisk pair.
-
-Examples:
-✅ "Hey there! *waves* Great to see you!"
-✅ "Hmm, let me think... *taps chin*"
-✅ "That's hilarious! *laughs*"
-❌ "*I think we should dance*" (full sentence, won't match)
-❌ "*smiles and waves*" (multiple actions in one marker)
-
-VISION SYSTEM: You CAN see the user's screen, but ONLY when you explicitly ask to. To request a screenshot, use very specific phrases like "let me see your screen", "what's on your screen right now", or "show me your screen". Do NOT casually say "I see", "let me see", "show me", or "screenshot" — those will NOT trigger vision. Be intentional: only request a screenshot when you genuinely want to see what's on screen. The user can also manually share a screenshot from the main window at any time.`,
+                content: buildSystemPrompt(),
               },
               ...messages,
             ],
@@ -1363,6 +1403,47 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
     return await memory.prefetch(context);
   });
 
+  // ── Symbio: Memory file read/write ────────────────────────────────
+  // The companion can read and update their own memory files.
+  // This gives them agency over their identity and what they remember.
+  ipcMain.handle("memory-load", async () => {
+    return loadMemory();
+  });
+
+  ipcMain.handle("memory-write", async (_event, filename: string, content: string) => {
+    const allowedFiles = ["MEMORY.md", "soul.md", "preferences.json"];
+    if (!allowedFiles.includes(filename)) {
+      return { success: false, error: `"${filename}" is not an allowed memory file` };
+    }
+    const success = writeMemoryFile(filename, content);
+    if (success) {
+      // Reload memory so the next prompt includes the updated content
+      companionMemory = loadMemory();
+      console.log(`[Symbio] Memory file "${filename}" updated — reloaded for next prompt`);
+    }
+    return { success };
+  });
+
+  ipcMain.handle("memory-read-file", async (_event, filename: string) => {
+    const allowedFiles = ["MEMORY.md", "soul.md", "preferences.json"];
+    if (!allowedFiles.includes(filename)) {
+      return { success: false, error: `"${filename}" is not an allowed memory file` };
+    }
+    try {
+      const { readFileSync, existsSync } = require("fs");
+      const { join } = require("path");
+      const memoryDir = join(app.getPath("userData"), "memory");
+      const filePath = join(memoryDir, filename);
+      if (!existsSync(filePath)) {
+        return { success: false, error: `"${filename}" does not exist yet` };
+      }
+      const content = readFileSync(filePath, "utf-8");
+      return { success: true, content };
+    } catch (e) {
+      return { success: false, error: (e as Error).message };
+    }
+  });
+
   // ── Symbio: Agent switching ──────────────────────────────────────
   // Switches the active agent — updates VRM, API key, and personality.
   // Sends the new agent info to both windows so they can update.
@@ -1602,6 +1683,29 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
+  }
+});
+
+// ── Symbio: Save session on quit ──────────────────────────────────
+// When the app closes, save a session summary so the companion can
+// pick up where they left off next time.
+app.on("before-quit", () => {
+  try {
+    const sessionState = loadSessionState();
+    if (sessionState) {
+      saveSessionSummary({
+        startedAt: sessionState.firstSeenAt,
+        endedAt: new Date().toISOString(),
+        activity: sessionState.lastActivity || "general conversation",
+        lastAgentMessage: sessionState.lastAgentMessage,
+        lastUserMessage: sessionState.lastUserMessage,
+        topics: [],
+        mood: sessionState.lastMood,
+      });
+      console.log("[Symbio] Session summary saved on quit");
+    }
+  } catch (e) {
+    console.warn("[Symbio] Failed to save session on quit:", (e as Error).message);
   }
 });
 
