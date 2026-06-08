@@ -80,7 +80,20 @@ const Overlay = () => {
     return () => cleanup?.();
   }, []);
 
-  // ── Symbio: Agent switching is handled by OverlayLayout ────────
+  // ── Symbio: Listen for avatar switches ──────────────────────────
+  // When the companion chooses or tries on an avatar, the main process
+  // sends avatar-switched with the new VRM path. Update the scene.
+  useEffect(() => {
+    const cleanup = window.symbioAPI?.onAvatarSwitched?.((data: { vrmPath: string; name: string; trying?: boolean }) => {
+      console.log(`[Symbio] Overlay: Avatar ${data.trying ? "try-on" : "chosen"}: ${data.name} (${data.vrmPath})`);
+      setCurrentVrmUrl(data.vrmPath);
+      if (!data.trying) {
+        // Permanent choice — update config too
+        config.agentConfig.vrmPath = data.vrmPath;
+      }
+    });
+    return () => cleanup?.();
+  }, []);
   // OverlayLayout registers onAgentSwitched and updates the key prop,
   // which causes this Overlay component to remount with fresh config.
   // No need for a separate onAgentSwitched here — the remount reads

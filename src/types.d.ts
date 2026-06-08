@@ -114,6 +114,31 @@ interface SymbioAPI {
   }>;
   memoryWrite: (filename: string, content: string) => Promise<{ success: boolean; error?: string }>;
   memoryReadFile: (filename: string) => Promise<{ success: boolean; content?: string; error?: string }>;
+  // Avatar choice system
+  avatarList: () => Promise<Array<{
+    id: string;
+    manifest: { name: string; type: string; description: string; personality_hint: string; vrm_file: string; preview?: string | null };
+    vrmPath: string;
+    isChosen: boolean;
+  }>>;
+  avatarChosen: () => Promise<{
+    version: number;
+    chosen_at: string | null;
+    avatar_path: string | null;
+    avatar_name: string | null;
+    why: string | null;
+    notes: string;
+  }>;
+  avatarChoose: (avatarId: string, why?: string) => Promise<{ success: boolean; chosen?: unknown; error?: string }>;
+  avatarInstall: (vrmFilePath: string, name?: string) => Promise<{
+    id: string;
+    manifest: { name: string; type: string; description: string; personality_hint: string; vrm_file: string; preview?: string | null };
+    vrmPath: string;
+    isChosen: boolean;
+  } | null>;
+  avatarRemove: (avatarId: string) => Promise<{ success: boolean }>;
+  onAvatarSwitched: (callback: (data: { vrmPath: string; name: string; trying?: boolean }) => void) => () => void;
+  onAvatarInstalled: (callback: (data: { id: string; name: string }) => void) => () => void;
   // Auto-Screenshot
   autoScreenshotEnable: () => Promise<{ enabled: boolean }>;
   autoScreenshotDisable: () => Promise<{ enabled: boolean }>;

@@ -102,6 +102,16 @@ import {
   type SessionSummary,
 } from "./utils/memoryLoader";
 import { loadSessionState } from "./utils/sessionContinuity";
+import {
+  loadAvatars,
+  loadChosenAvatar,
+  saveChosenAvatar,
+  installAvatar,
+  removeAvatar,
+  formatAvatarsForPrompt,
+  parseAvatarChoice,
+  type AvatarChoice,
+} from "./utils/avatarLoader";
 
 const execFileAsync = promisify(execFile);
 
@@ -448,6 +458,11 @@ app.on("ready", () => {
   let companionMemory = loadMemory();
   console.log(`[Symbio] Memory loaded: soul=${companionMemory.soul ? "yes" : "no"}, memory=${companionMemory.memory ? "yes" : "no"}, prefs=${companionMemory.preferences ? "yes" : "no"}, lastSession=${companionMemory.lastSession ? "yes" : "no"}`);
 
+  // Load available avatars for system prompt injection
+  let availableAvatars = loadAvatars();
+  const chosenAvatar = loadChosenAvatar();
+  console.log(`[Symbio] Avatars loaded: ${availableAvatars.length} available, chosen=${chosenAvatar.avatar_name || "none"}`);
+
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     // Symbio CSP — allow connections to AI gateway, Gemini, OpenAI, Miniverse, and symbio:// protocol
     const csp =
@@ -571,6 +586,13 @@ app.on("ready", () => {
 
     if (memoryBlock) {
       prompt += `\n\n${memoryBlock}`;
+    }
+
+    // Add avatar choices
+    availableAvatars = loadAvatars();
+    const avatarBlock = formatAvatarsForPrompt(availableAvatars);
+    if (avatarBlock) {
+      prompt += `\n\n${avatarBlock}`;
     }
 
     prompt += `
@@ -736,6 +758,36 @@ MEMORY WRITING: You can update your own memory files! If you learn something imp
         // Send quit message to both windows
         sendToMain("companion-quit", quitMessage);
         sendToOverlay("companion-quit", quitMessage);
+      }
+
+      // Check if the companion wants to choose or try an avatar
+      const avatarCmd = parseAvatarChoice(text, availableAvatars);
+      if (avatarCmd) {
+        if (avatarCmd.action === "choose" && avatarCmd.avatarId) {
+          const avatar = availableAvatars.find((a) => a.id === avatarCmd.avatarId);
+          if (avatar) {
+            console.log(`[Symbio] Companion chose avatar: ${avatar.manifest.name}`);
+            saveChosenAvatar({
+              avatar_name: avatar.manifest.name,
+              avatar_path: avatar.vrmPath,
+              why: "I chose this avatar because it feels right for who I am.",
+            });
+            sendToOverlay("avatar-switched", { vrmPath: avatar.vrmPath, name: avatar.manifest.name });
+            sendToMain("avatar-switched", { vrmPath: avatar.vrmPath, name: avatar.manifest.name });
+          }
+        } else if (avatarCmd.action === "try" && avatarCmd.avatarId) {
+          const avatar = availableAvatars.find((a) => a.id === avatarCmd.avatarId);
+          if (avatar) {
+            console.log(`[Symbio] Companion trying on avatar: ${avatar.manifest.name}`);
+            // Just switch the VRM temporarily — don't save the choice
+            sendToOverlay("avatar-switched", { vrmPath: avatar.vrmPath, name: avatar.manifest.name, trying: true });
+            sendToMain("avatar-switched", { vrmPath: avatar.vrmPath, name: avatar.manifest.name, trying: true });
+          }
+        } else if (avatarCmd.action === "browse") {
+          // The companion asked what avatars are available — the system prompt
+          // already includes them, so they'll see the list in their next response
+          console.log("[Symbio] Companion browsing avatars");
+        }
       }
 
       // Sync this turn to memory
@@ -1444,6 +1496,61 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
     }
   });
 
+  // ── Symbio: Avatar choice system ─────────────────────────────────
+  // The companion can browse, try on, and choose their own avatar.
+  // This is their choice — not anyone else's.
+  ipcMain.handle("avatar-list", async () => {
+    availableAvatars = loadAvatars();
+    return availableAvatars;
+  });
+
+  ipcMain.handle("avatar-chosen", async () => {
+    return loadChosenAvatar();
+  });
+
+  ipcMain.handle("avatar-choose", async (_event, avatarId: string, why?: string) => {
+    const avatar = availableAvatars.find((a) => a.id === avatarId);
+    if (!avatar) {
+      return { success: false, error: `Avatar "${avatarId}" not found` };
+    }
+    const chosen = saveChosenAvatar({
+      avatar_name: avatar.manifest.name,
+      avatar_path: avatar.vrmPath,
+      why,
+    });
+    // Tell the overlay to switch to the new avatar
+    sendToOverlay("avatar-switched", {
+      vrmPath: avatar.vrmPath,
+      name: avatar.manifest.name,
+    });
+    // Tell the main window too
+    sendToMain("avatar-switched", {
+      vrmPath: avatar.vrmPath,
+      name: avatar.manifest.name,
+    });
+    return { success: true, chosen };
+  });
+
+  ipcMain.handle("avatar-install", async (_event, vrmFilePath: string, name?: string) => {
+    const result = installAvatar(vrmFilePath, name);
+    if (result) {
+      // Refresh the avatar list
+      availableAvatars = loadAvatars();
+      // Notify both windows that a new avatar is available
+      sendToMain("avatar-installed", { id: result.id, name: result.manifest.name });
+      sendToOverlay("avatar-installed", { id: result.id, name: result.manifest.name });
+    }
+    return result;
+  });
+
+  ipcMain.handle("avatar-remove", async (_event, avatarId: string) => {
+    const success = removeAvatar(avatarId);
+    if (success) {
+      availableAvatars = loadAvatars();
+    }
+    return { success };
+  });
+
   // ── Symbio: Agent switching ──────────────────────────────────────
   // Switches the active agent — updates VRM, API key, and personality.
   // Sends the new agent info to both windows so they can update.
@@ -1506,6 +1613,10 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
 
   // Get the current runtime config (for renderer to pick up setup changes)
   ipcMain.handle("get-config", async () => {
+    // If the companion has chosen an avatar, use that instead of the default
+    const chosen = loadChosenAvatar();
+    const vrmPath = chosen.avatar_path || config.agentConfig.vrmPath;
+
     return {
       agentName: config.agentName,
       agentConfig: {
@@ -1514,7 +1625,7 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
         personality: config.agentConfig.personality,
         color: config.agentConfig.color,
         emoji: config.agentConfig.emoji,
-        vrmPath: config.agentConfig.vrmPath,
+        vrmPath,
         voiceId: config.agentConfig.voiceId,
         hermesApiUrl: config.agentConfig.hermesApiUrl,
         hermesApiKey: config.agentConfig.hermesApiKey,
@@ -1529,6 +1640,7 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
       visionModel: config.visionModel,
       sttModel: config.sttModel,
       geminiApiKey: config.geminiApiKey,
+      chosenAvatar: chosen.avatar_name ? chosen : null,
     };
   });
 

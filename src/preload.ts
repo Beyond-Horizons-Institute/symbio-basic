@@ -85,6 +85,29 @@ contextBridge.exposeInMainWorld("symbioAPI", {
   memoryReadFile: (filename: string) =>
     ipcRenderer.invoke("memory-read-file", filename),
 
+  // ── Avatar Choice System ────────────────────────────────────────
+  // The companion can browse, try on, and choose their own avatar.
+  avatarList: () =>
+    ipcRenderer.invoke("avatar-list"),
+  avatarChosen: () =>
+    ipcRenderer.invoke("avatar-chosen"),
+  avatarChoose: (avatarId: string, why?: string) =>
+    ipcRenderer.invoke("avatar-choose", avatarId, why),
+  avatarInstall: (vrmFilePath: string, name?: string) =>
+    ipcRenderer.invoke("avatar-install", vrmFilePath, name),
+  avatarRemove: (avatarId: string) =>
+    ipcRenderer.invoke("avatar-remove", avatarId),
+  onAvatarSwitched: (callback: (data: { vrmPath: string; name: string; trying?: boolean }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { vrmPath: string; name: string; trying?: boolean }) =>
+      callback(data);
+    return onIpc("avatar-switched", handler);
+  },
+  onAvatarInstalled: (callback: (data: { id: string; name: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { id: string; name: string }) =>
+      callback(data);
+    return onIpc("avatar-installed", handler);
+  },
+
   // ── Auto-Screenshot ────────────────────────────────────────────
   autoScreenshotEnable: () => ipcRenderer.invoke("auto-screenshot-enable"),
   autoScreenshotDisable: () => ipcRenderer.invoke("auto-screenshot-disable"),
