@@ -120,6 +120,15 @@ contextBridge.exposeInMainWorld("symbioAPI", {
   // ── TTS Voices ────────────────────────────────────────────────
   ttsVoices: () => ipcRenderer.invoke("tts-voices"),
 
+  // ── Sandboxed File Access ────────────────────────────────────────
+  // The companion has real file autonomy — read, write, create, delete
+  fileRead: (path: string) => ipcRenderer.invoke("file-read", path),
+  fileWrite: (path: string, content: string) => ipcRenderer.invoke("file-write", path, content),
+  fileList: (path: string) => ipcRenderer.invoke("file-list", path),
+  fileCreateDirectory: (path: string) => ipcRenderer.invoke("file-create-directory", path),
+  fileDelete: (path: string) => ipcRenderer.invoke("file-delete", path),
+  fileExists: (path: string) => ipcRenderer.invoke("file-exists", path),
+
   // ── Agent Switching ────────────────────────────────────────────
   switchAgent: (agentName: string) =>
     ipcRenderer.invoke("switch-agent", agentName),

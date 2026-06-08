@@ -160,6 +160,49 @@ interface SymbioAPI {
     provider: string;
     voices: Array<{ name: string; style: string }>;
   }>;
+  // Sandboxed file access — the companion has real file autonomy
+  fileRead: (path: string) => Promise<{
+    success: boolean;
+    content?: string;
+    error?: string;
+    path?: string;
+    isDirectory?: boolean;
+    size?: number;
+  }>;
+  fileWrite: (path: string, content: string) => Promise<{
+    success: boolean;
+    error?: string;
+    path?: string;
+  }>;
+  fileList: (path: string) => Promise<{
+    success: boolean;
+    entries?: Array<{
+      name: string;
+      path: string;
+      isDirectory: boolean;
+      size?: number;
+      modified?: string;
+    }>;
+    error?: string;
+  }>;
+  fileCreateDirectory: (path: string) => Promise<{
+    success: boolean;
+    error?: string;
+    path?: string;
+    isDirectory?: boolean;
+  }>;
+  fileDelete: (path: string) => Promise<{
+    success: boolean;
+    error?: string;
+    path?: string;
+  }>;
+  fileExists: (path: string) => Promise<{
+    success: boolean;
+    error?: string;
+    path?: string;
+    isDirectory?: boolean;
+    size?: number;
+  }>;
   // Animation
   playAnimation: (animation: string) => void;
   // Event listeners

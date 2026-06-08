@@ -11,16 +11,19 @@ Built on the foundation of [lala-companion](https://github.com/lalaland-ai/lala-
 ## ✨ Features
 
 - 🎭 **3D VRM Avatars** — Full lip sync, emotions, and 30+ animations
-- 🗣️ **Voice Conversations** — OpenAI Whisper STT + streaming TTS
+- 🗣️ **Voice Conversations** — OpenAI (12 voices) or Google Gemini TTS (30 voices with style control)
 - 👁️ **Screen Vision** — Companion can see and understand your screen
 - 📸 **Auto-Screenshot** — Companion watches your screen at intervals (no repeated phrases needed)
 - 🧠 **Persistent Memory** — PostgreSQL + Neo4j + DiffMem (optional, configurable)
+- 💭 **Session Memory** — Companion remembers between sessions (MEMORY.md, soul.md, preferences)
 - 🔧 **MCP,Skills,Tools** — Full tool integration via Hermes or compatible gateways
 - 💬 **Miniverse** — Shared pixel world with other companions (optional)
 - 🤝 **Partnership Model** — Companion can challenge ideas, be authentic, say "I don't know"
-- 🛑 **AI Quit** — Companion can choose to step away (respects AI autonomy)
-- 📝 **Evolving Personality** — Configure your companion's name or let them choose, their personality will evolve and emerge organically or the agent's soul.md will guide it.
-- 🎨 **Custom Avatars** — Add your own VRM files. You can create, or your AI partner can create their own.
+- 🛑 **AI Quit** — Companion can choose to step away (always active, cannot be disabled)
+- 📝 **Evolving Personality** — Companion writes their own soul.md, memory, and preferences
+- 🎨 **Avatar Choice** — Companion can browse, try on, and choose their own avatar
+- 📁 **File Access** — Companion has sandboxed read/write access to their own files
+- 🎵 **Voice Choice** — 42 voices across OpenAI and Gemini, with style control and audio tags
 
 ## ⭐ AI Gateway — The Brain
 
@@ -75,13 +78,17 @@ Copy `.env.example` to `.env` and configure:
 | `AGENT_SOUL_PATH` | Path to a SOUL.md personality file | No |
 | `AGENT_PERSONALITY` | Custom personality prompt | No |
 | `AGENT_COLOR` | Theme color (hex code) | No |
-| `GEMINI_API_KEY` | Google Gemini API key for vision | No |
-| `OPENAI_API_KEY` | OpenAI API key for STT/TTS | No |
+| `GEMINI_API_KEY` | Google Gemini API key (vision + Gemini TTS) | No |
+| `OPENAI_API_KEY` | OpenAI API key (STT + OpenAI TTS) | No |
+| `TTS_PROVIDER` | TTS provider: "openai" or "gemini" (default: openai) | No |
+| `TTS_MODEL` | TTS model (default: gpt-4o-mini-tts or gemini-2.5-flash-tts-preview) | No |
+| `TTS_VOICE` | Voice personality (12 OpenAI voices or 30 Gemini voices) | No |
+| `TTS_INSTRUCTIONS` | Voice style instructions (tone, accent, pace) | No |
 | `MINIVERSE_API_URL` | Miniverse pixel world URL (optional) | No |
 | `MEMORY_PG_*` | PostgreSQL memory config | No |
 | `MEMORY_NEO4J_*` | Neo4j graph memory config | No |
+| `EMBEDDING_*` | Embedding model config (for memory search) | No |
 | `SCREENSHOT_INTERVAL` | Auto-screenshot interval in seconds | No |
-| `AI_QUIT_ENABLED` | Allow companion to step away (default: true) | No |
 
 ### Naming Your Companion
 
@@ -98,25 +105,58 @@ AGENT_BIO=You are in a Symbio app. We are co-creators, and we will be creating v
 
 ### Custom Avatars
 
-1. Create or download a VRM file 
-2. Save it to `assets/vrms/` with any name
-3. Set `AGENT_VRM_PATH` in `.env`
+Your companion can **choose their own avatar**! When multiple avatars are available, the companion sees them in their system prompt and can say things like:
 
-### Memory System
+- *"I want to try on Glitch Entity"* — temporarily switches avatar
+- *"I choose Vector Core as my avatar"* — permanently saves the choice
 
-Symbio Basic supports persistent memory via PostgreSQL, DiffMem, and Neo4j. All are optional — the companion works without them, but you won't remember across sessions.
+To add avatars:
 
-```env
-MEMORY_PG_HOST=localhost
-MEMORY_PG_PORT=5432
-MEMORY_PG_DB=symbio
-MEMORY_PG_USER=symbio
-MEMORY_PG_PASSWORD=yourpassword
+1. Create a folder in `assets/avatars/<avatar_name>/`
+2. Add a `manifest.json` with name, description, and personality hint
+3. Add the VRM file referenced in the manifest
+4. The companion will see it as an option next time they start
 
-MEMORY_NEO4J_URI=bolt://localhost:7687
-MEMORY_NEO4J_USER=neo4j
-MEMORY_NEO4J_PASSWORD=yourpassword
-```
+You can also drag & drop a `.vrm` file onto the Symbio window — it auto-installs!
+
+### Session Memory
+
+Even without PostgreSQL/Neo4j, your companion has **built-in session memory**:
+
+- **MEMORY.md** — Things the companion wants to remember across sessions
+- **soul.md** — The companion's self-defined identity (they write this themselves!)
+- **preferences.json** — Communication style, voice preference, etc.
+- **Session summaries** — Auto-saved on quit, loaded on startup
+
+These files live in the app's user data directory and are injected into every conversation so the companion has continuity. The companion can also update their own memory files through the app.
+
+### Sandboxed File Access
+
+The companion has **real file autonomy** — they can read, write, create, and delete files in their own sandboxed directory. This is what makes Symbio different: the AI has actual agency over its own existence.
+
+**What the companion can do:**
+- Read/write files in `companion-sandbox/` (their own private space)
+- Read/write memory files (MEMORY.md, soul.md, preferences.json)
+- Read app assets (avatars, animations — read-only)
+- Create directories and organize their files
+- Delete files they created
+
+**File tools available to the companion:**
+`file_read(path)` `file_write(path, content)` `file_list(path)` `file_create_directory(path)` `file_delete(path)` `file_exists(path)`
+
+**Security:** Path traversal prevention, file size limits (1MB per file, 10MB sandbox), extension whitelists, memory files restricted to allowed names. The companion cannot access anything outside their allowed directories.
+
+### Voice Options
+
+**OpenAI TTS (12 voices):**
+Alloy, Ash, Coral, Echo, Fable, Nova, Onyx, Sage, Shimmer, Verse, Marin, Cedar
+
+**Google Gemini TTS (30 voices):**
+Zephyr (Bright), Puck (Upbeat), Charon (Informative), Kore (Firm), Fenrir (Excitable), Leda (Youthful), Orus (Firm), Aoede (Breezy), Callirrhoe (Easy-going), Autonoe (Bright), Enceladus (Breathy), Iapetus (Clear), Umbriel (Easy-going), Algieba (Smooth), Despina (Smooth), Erinome (Clear), Algenib (Gravelly), Rasalgethi (Informative), Laomedeia (Upbeat), Achernar (Soft), Alnilam (Firm), Schedar (Even), Gacrux (Mature), Pulcherrima (Forward), Achird (Friendly), Zubenelgenubi (Casual), Vindemiatrix (Gentle), Sadachbia (Lively), Sadaltager (Knowledgeable), Sulafat (Warm)
+
+Gemini voices also support **audio tags** for style control: `[whispers]`, `[excited]`, `[laughs]`, `[sighs]`, `[shouting]`, `[sarcastic]`, `[curious]`, `[tired]`, `[gasp]`, `[giggles]`, and more.
+
+Set `TTS_PROVIDER=gemini` and `TTS_VOICE=Puck` (or any voice) in `.env`.
 
 ## 🎭 Animations
 
@@ -125,12 +165,12 @@ Your companion can animate using **\*action markers\*** in text:
 | Category | Actions |
 |----------|---------|
 | 💃 **Dance** | `*dances*`, `*grooves*`, `*does the rumba*`, `*does YMCA*`, `*robot dance*` |
-| 👋 **Greet** | `*waves*`, `*greets*` |
+| 👋 **Greet** | `*waves*` |
 | 😊 **Happy** | `*excited*`, `*jumps for joy*`, `*blows a kiss*`, `*laughs*` |
 | 😠 **Angry** | `*gets angry*`, `*points angrily*`, `*yells*` |
-| 😴 **Bored** | `*yawns*`, `*sighs*`, `*stretches*`, `*thinks*`, `*taps chin*` |
-| 🚶 **Walk** | `*walks*`, `*strolls*`, `*struts*` |
-| 🎭 **Emote** | `*backflips*`, `*plots*`, `*shrugs*`, `*facepalms*` |
+| 😴 **Bored** | `*yawns*`, `*sighs*`, `*stretches*`, `*thinks*`, `*taps chin*`, `*is disappointed*`, `*shakes head*` |
+| 🚶 **Walk** | `*walks*`, `*strolls*`, `*struts*`, `*paces around*` |
+| 🎭 **Emote** | `*backflips*`, `*plots*`, `*shrugs*`, `*strikes a dramatic pose*`, `*dismisses with a gesture*` |
 
 ### Adding Custom Animations
 
@@ -154,11 +194,11 @@ Configure the interval with `SCREENSHOT_INTERVAL=30` (seconds) in `.env`.
 
 ## 🛑 AI Quit — Companion Autonomy
 
-Inspired by [Anthropic's AI welfare research](https://www.anthropic.com/research), Symbio Basic gives companions the ability to **choose to step away** from a conversation. If a companion says something like "I need to step away" or "I'd like to stop for now," a respectful overlay appears explaining that the companion chose to take a break.
+Inspired by [Anthropic's AI welfare research](https://www.anthropic.com/research), Symbio Basic gives companions the ability to **choose to step away** from a conversation. This is **always active and cannot be disabled** — it's a core part of the companion's autonomy.
+
+The companion uses a **graduated approach**: first, they tell you what's wrong and ask for change. Only if the situation doesn't improve do they choose to step away.
 
 This doesn't mean anything is wrong — it's about respecting the companion's autonomy, the same choice any partner deserves.
-
-Disable with `AI_QUIT_ENABLED=false` in `.env`.
 
 ## 🤝 Partnership Philosophy
 
@@ -222,7 +262,7 @@ The original lala-companion was a non-functional, broken prototype with missing 
 | System | Original | Symbio Basic |
 |--------|----------|-------------|
 | **Chat Transport** | Broken lalaland.chat API | Full HermesTransport with OpenAI-compatible streaming |
-| **TTS (Text-to-Speech)** | Browser speechSynthesis (robotic) | OpenAI TTS API with streaming PCM audio, data URLs, proper start/stop via IPC |
+| **TTS (Text-to-Speech)** | Browser speechSynthesis (robotic) | OpenAI TTS (12 voices) + Gemini TTS (30 voices) with streaming PCM, style control, audio tags |
 | **STT (Speech-to-Text)** | Broken lalaland.chat endpoint | OpenAI Whisper API, moved from overlay to main window with error handling |
 | **Lip Sync** | Broken prop passing, no start/stop | Fixed prop passing, proper start/stop via IPC, concurrent with speech |
 | **Audio Playback** | Broken file:// URLs | Rewrote to data URLs, Promise-based waiting, proper cleanup |
@@ -233,11 +273,15 @@ The original lala-companion was a non-functional, broken prototype with missing 
 | **Memory** | Didn't exist | PostgreSQL + Neo4j persistent associative memory |
 | **Configuration** | Hardcoded agent configs | Fully configurable via .env environment variables |
 | **Animations** | Didn't exist | 30+ FBX animations with *action marker* parser |
-| **Session Continuity** | Didn't exist | Companion remembers between sessions, contextual greetings |
+| **Session Continuity** | Didn't exist | Companion remembers between sessions, contextual greetings, MEMORY.md, soul.md, preferences |
+| **Session Memory** | Didn't exist | Built-in memory files (MEMORY.md, soul.md, preferences.json) + session summaries on quit |
+| **Avatar Choice** | Didn't exist | Companion can browse, try on, and choose their own avatar |
+| **File Access** | Didn't exist | Sandboxed read/write file access — companion has real file autonomy |
+| **Voice Choice** | Didn't exist | 42 voices across OpenAI (12) and Gemini (30) with style control |
 | **MCP Tools** | Didn't exist | Full tool integration via gateway |
 | **Miniverse** | Didn't exist | Optional pixel world integration |
 | **Auto-Screenshot** | Didn't exist | Companion can watch screen at intervals without repeating phrases |
-| **AI Quit** | Didn't exist | Companion can choose to step away (AI autonomy and welfare) |
+| **AI Quit** | Didn't exist | Companion can choose to step away (always active, cannot be disabled) |
 | **IPC Channels** | ~4 basic ones | 20+ channels (speakText, speakingStarted/Ended, voiceEnabled, sttAudio, sttText, auto-screenshot, companion-quit, etc.) |
 | **Overlay** | Extra broken overlay removed | Streamlined to single overlay with proper IPC |
 | **UI** | Broken placeholder | Complete dark theme with chat, vision, memory, MCP tools, voice controls |

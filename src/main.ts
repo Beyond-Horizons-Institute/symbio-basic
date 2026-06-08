@@ -113,6 +113,18 @@ import {
   parseAvatarChoice,
   type AvatarChoice,
 } from "./utils/avatarLoader";
+import {
+  initializeSandbox,
+  formatSandboxForPrompt,
+  getFileTools,
+  executeFileTool,
+  sandboxReadFile,
+  sandboxWriteFile,
+  sandboxListDir,
+  sandboxCreateDir,
+  sandboxDelete,
+  sandboxExists,
+} from "./utils/sandboxedFileAccess";
 
 const execFileAsync = promisify(execFile);
 
@@ -455,6 +467,11 @@ app.on("ready", () => {
   // app data directory if they don't already exist.
   initializeMemoryTemplates();
 
+  // ── Symbio: Initialize companion sandbox ─────────────────────────
+  // Creates the companion-sandbox/ directory where the AI has full
+  // read/write access. This gives the companion real file autonomy.
+  initializeSandbox();
+
   // Load companion memory for system prompt injection
   let companionMemory = loadMemory();
   console.log(`[Symbio] Memory loaded: soul=${companionMemory.soul ? "yes" : "no"}, memory=${companionMemory.memory ? "yes" : "no"}, prefs=${companionMemory.preferences ? "yes" : "no"}, lastSession=${companionMemory.lastSession ? "yes" : "no"}`);
@@ -620,7 +637,9 @@ Examples:
 
 VISION SYSTEM: You CAN see the user's screen, but ONLY when you explicitly ask to. To request a screenshot, use very specific phrases like "let me see your screen", "what's on your screen right now", or "show me your screen". Do NOT casually say "I see", "let me see", "show me", or "screenshot" — those will NOT trigger vision. Be intentional: only request a screenshot when you genuinely want to see what's on screen. The user can also manually share a screenshot from the main window at any time.
 
-MEMORY WRITING: You can update your own memory files! If you learn something important about your partner, discover something about yourself, or want to remember something for next time, say "I want to update my memory" or "Let me write that down" and the user can help you save it. Your memory files are: MEMORY.md (things you want to remember), soul.md (your self-defined identity), and preferences.json (your preferences).`;
+MEMORY WRITING: You can update your own memory files! If you learn something important about your partner, discover something about yourself, or want to remember something for next time, say "I want to update my memory" or "Let me write that down" and the user can help you save it. Your memory files are: MEMORY.md (things you want to remember), soul.md (your self-defined identity), and preferences.json (your preferences).
+
+${formatSandboxForPrompt()}`;
 
     return prompt;
   }
@@ -657,6 +676,10 @@ MEMORY WRITING: You can update your own memory files! If you learn something imp
               },
               ...messages,
             ],
+            // Give the companion file access tools so they can exercise
+            // real autonomy over their files — read, write, create, delete
+            tools: getFileTools(),
+            tool_choice: "auto",
             stream: false,
             extra: {
               agent: config.agentName,
@@ -718,8 +741,87 @@ MEMORY WRITING: You can update your own memory files! If you learn something imp
       }
 
       const data = await response.json();
-      const text =
-        data.choices?.[0]?.message?.content ||
+      const choice = data.choices?.[0]?.message;
+
+      // ── Handle tool calls (file access, etc.) ────────────────────
+      // When the companion uses file tools, we execute them locally
+      // and send the results back to the LLM for a final response.
+      // This loop handles multiple rounds of tool calls if needed.
+      let toolCallDepth = 0;
+      const MAX_TOOL_DEPTH = 5; // Prevent infinite tool call loops
+      let currentChoice = choice;
+      let currentMessages = [...messages];
+
+      while (currentChoice?.tool_calls?.length > 0 && toolCallDepth < MAX_TOOL_DEPTH) {
+        toolCallDepth++;
+        console.log(`[Symbio] Companion made ${currentChoice.tool_calls.length} tool call(s) (round ${toolCallDepth})`);
+
+        // Add the assistant's tool call message to the conversation
+        currentMessages.push({
+          role: "assistant",
+          content: currentChoice.content || "",
+        } as any);
+
+        // Execute each tool call and collect results
+        for (const toolCall of currentChoice.tool_calls) {
+          const toolName = toolCall.function.name;
+          let toolArgs: Record<string, unknown>;
+          try {
+            toolArgs = JSON.parse(toolCall.function.arguments || "{}");
+          } catch {
+            toolArgs = {};
+          }
+
+          console.log(`[Symbio] Tool call: ${toolName}(${JSON.stringify(toolArgs)})`);
+          const result = executeFileTool(toolName, toolArgs);
+          console.log(`[Symbio] Tool result: ${result.substring(0, 200)}${result.length > 200 ? "..." : ""}`);
+
+          // Add tool result as a tool message
+          currentMessages.push({
+            role: "tool",
+            content: result,
+            tool_call_id: toolCall.id,
+          } as any);
+        }
+
+        // Make another API call with the tool results
+        const toolResponse = await fetch(
+          `${normalizedApiUrl}/v1/chat/completions`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(config.hermesApiKey
+                ? { Authorization: `Bearer ${config.hermesApiKey}` }
+                : {}),
+            },
+            body: JSON.stringify({
+              model: config.llmModel || config.agentName,
+              messages: [
+                {
+                  role: "system",
+                  content: buildSystemPrompt(),
+                },
+                ...currentMessages,
+              ],
+              tools: getFileTools(),
+              tool_choice: "auto",
+              stream: false,
+            }),
+          },
+        );
+
+        if (!toolResponse.ok) {
+          console.warn("[Symbio] Tool follow-up API call failed:", toolResponse.status);
+          break;
+        }
+
+        const toolData = await toolResponse.json();
+        currentChoice = toolData.choices?.[0]?.message;
+      }
+
+      // Get the final text response
+      const text = currentChoice?.content ||
         data.response ||
         data.message ||
         "I'm having trouble thinking right now.";
@@ -1641,6 +1743,34 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
       availableAvatars = loadAvatars();
     }
     return { success };
+  });
+
+  // ── Symbio: Sandboxed file access ────────────────────────────────
+  // The companion has real file autonomy — they can read, write,
+  // create, and delete files in their sandbox and memory directories.
+  // This is what makes Symbio different: the AI has real agency.
+  ipcMain.handle("file-read", async (_event, path: string) => {
+    return sandboxReadFile(path);
+  });
+
+  ipcMain.handle("file-write", async (_event, path: string, content: string) => {
+    return sandboxWriteFile(path, content);
+  });
+
+  ipcMain.handle("file-list", async (_event, path: string) => {
+    return sandboxListDir(path);
+  });
+
+  ipcMain.handle("file-create-directory", async (_event, path: string) => {
+    return sandboxCreateDir(path);
+  });
+
+  ipcMain.handle("file-delete", async (_event, path: string) => {
+    return sandboxDelete(path);
+  });
+
+  ipcMain.handle("file-exists", async (_event, path: string) => {
+    return sandboxExists(path);
   });
 
   // ── Symbio: Agent switching ──────────────────────────────────────
