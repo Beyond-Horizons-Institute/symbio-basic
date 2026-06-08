@@ -83,6 +83,7 @@ import { MemoryClient } from "./transport/MemoryClient";
 import { MiniverseClient } from "./transport/MiniverseClient";
 import { MCPToolsClient, TOOL_CATEGORIES } from "./transport/MCPToolsClient";
 import { updateDynamicAgent } from "./transport/HermesTransport";
+import { streamGeminiSpeech, getGeminiVoices, getOpenAIVoices } from "./transport/GeminiTTS";
 import {
   enableAutoScreenshot,
   disableAutoScreenshot,
@@ -1113,7 +1114,98 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
     }
 
     const openaiKey = config.openaiApiKey;
-    if (openaiKey) {
+    const ttsProvider = config.ttsProvider || "openai";
+
+    if (ttsProvider === "gemini" && config.geminiApiKey) {
+      // ── Gemini TTS API ────────────────────────────────────────────
+      // Google Gemini's native TTS with 30 voice options and style control.
+      // Gemini doesn't stream, so we download the full audio then feed it
+      // to the renderer in chunks (compatible with the streaming PCM player).
+      const voice = config.ttsVoice || "Puck";
+      const model = config.ttsModel || "gemini-2.5-flash-tts-preview";
+
+      const playback = {
+        stopped: false,
+        stop: () => {
+          playback.stopped = true;
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send("tts-stream-stop");
+          }
+        },
+      };
+      currentAudioPlayback = playback;
+
+      try {
+        console.log(`[Symbio] Gemini TTS: generating speech with ${voice} (${model})...`);
+
+        // Tell the renderer to initialize the streaming audio player
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("tts-stream-init", { sampleRate: 24000, channels: 1 });
+        }
+
+        let isFirstChunk = true;
+
+        await streamGeminiSpeech(
+          { text, voice, model, instructions: config.ttsInstructions || undefined },
+          // onChunk: feed PCM data to the renderer
+          (chunk: Buffer, isFirst: boolean) => {
+            if (playback.stopped) return;
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              const chunkBase64 = chunk.toString("base64");
+              mainWindow.webContents.send("tts-stream-chunk", chunkBase64);
+
+              // Send speaking-started on the first chunk
+              if (isFirst || isFirstChunk) {
+                speakingStartedTimeout = setTimeout(() => {
+                  sendToOverlay("speaking-started");
+                  speakingStartedTimeout = null;
+                }, 300);
+                isFirstChunk = false;
+              }
+            }
+          },
+          // onEnd: tell renderer the stream is done
+          () => {
+            if (mainWindow && !mainWindow.isDestroyed() && !playback.stopped) {
+              mainWindow.webContents.send("tts-stream-end");
+            }
+          },
+          // onError: fall back to browser TTS
+          (error: string) => {
+            console.error(`[Symbio] Gemini TTS error: ${error}`);
+            speakWithBrowserTTS(text);
+          },
+          // signal: allow stopping playback
+          playback,
+        );
+
+        // Wait for playback to finish
+        const endedPromise = new Promise<void>((resolve) => {
+          const handler = (_event: any, result: string) => {
+            ipcMain.removeListener("tts-playback-ended", handler);
+            resolve();
+          };
+          ipcMain.on("tts-playback-ended", handler);
+          setTimeout(() => {
+            ipcMain.removeListener("tts-playback-ended", handler);
+            resolve();
+          }, 300000);
+        });
+
+        await endedPromise;
+
+        if (!playback.stopped) {
+          sendToOverlay("speaking-ended");
+        }
+        currentAudioPlayback = null;
+
+      } catch (e) {
+        console.error("[Symbio] Gemini TTS error:", e);
+        // Fall back to browser TTS
+        speakWithBrowserTTS(text);
+      }
+
+    } else if (openaiKey) {
       // ── OpenAI TTS API (Streaming) ────────────────────────────────
       // High-quality voice using gpt-4o-mini-tts (same model Hermes uses).
       // We stream PCM audio (24kHz, 16-bit, little-endian) for minimal
@@ -1602,6 +1694,16 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
     }
   });
 
+  // ── Symbio: TTS Voice Options ─────────────────────────────────────
+  // Returns available voices for the current TTS provider
+  ipcMain.handle("tts-voices", async () => {
+    const provider = config.ttsProvider || "openai";
+    if (provider === "gemini") {
+      return { provider: "gemini", voices: getGeminiVoices() };
+    }
+    return { provider: "openai", voices: getOpenAIVoices() };
+  });
+
   // ── Symbio: Setup Wizard ──────────────────────────────────────────
   // Check if the app needs first-run setup (no API key configured)
   ipcMain.handle("needs-setup", async () => {
@@ -1634,6 +1736,7 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
       hermesApiKey: config.hermesApiKey,
       llmModel: config.llmModel,
       openaiApiKey: config.openaiApiKey,
+      ttsProvider: config.ttsProvider,
       ttsModel: config.ttsModel,
       ttsVoice: config.ttsVoice,
       ttsInstructions: config.ttsInstructions,
@@ -1678,6 +1781,7 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
       lines.push("");
       lines.push("# ── Voice & Vision ──────────────────────────────────────────────");
       if (setupConfig.openaiApiKey) lines.push(`OPENAI_API_KEY=${setupConfig.openaiApiKey}`);
+      if (setupConfig.ttsProvider && setupConfig.ttsProvider !== "openai") lines.push(`TTS_PROVIDER=${setupConfig.ttsProvider}`);
       if (setupConfig.ttsModel && setupConfig.ttsModel !== "gpt-4o-mini-tts") lines.push(`TTS_MODEL=${setupConfig.ttsModel}`);
       if (setupConfig.ttsVoice && setupConfig.ttsVoice !== "fable") lines.push(`TTS_VOICE=${setupConfig.ttsVoice}`);
       if (setupConfig.ttsInstructions) lines.push(`TTS_INSTRUCTIONS=${setupConfig.ttsInstructions}`);
@@ -1724,6 +1828,7 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
       if (setupConfig.agentBio) config.agentConfig.personality = setupConfig.agentBio as string;
       if (setupConfig.agentColor) config.agentConfig.color = setupConfig.agentColor as string;
       if (setupConfig.openaiApiKey) config.openaiApiKey = setupConfig.openaiApiKey as string;
+      if (setupConfig.ttsProvider) config.ttsProvider = setupConfig.ttsProvider as string;
       if (setupConfig.ttsModel) config.ttsModel = setupConfig.ttsModel as string;
       if (setupConfig.ttsVoice) config.ttsVoice = setupConfig.ttsVoice as string;
       if (setupConfig.ttsInstructions) config.ttsInstructions = setupConfig.ttsInstructions as string;

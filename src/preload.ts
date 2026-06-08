@@ -117,6 +117,8 @@ contextBridge.exposeInMainWorld("symbioAPI", {
   mcpGetCategories: () => ipcRenderer.invoke("mcp-get-categories"),
   mcpTriggerTool: (toolName: string, instruction: string) =>
     ipcRenderer.invoke("mcp-trigger-tool", toolName, instruction),
+  // ── TTS Voices ────────────────────────────────────────────────
+  ttsVoices: () => ipcRenderer.invoke("tts-voices"),
 
   // ── Agent Switching ────────────────────────────────────────────
   switchAgent: (agentName: string) =>

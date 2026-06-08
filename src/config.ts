@@ -88,9 +88,16 @@ export interface SymbioConfig {
   openaiApiKey: string;
 
   // TTS (Text-to-Speech) configuration
-  ttsModel: string;       // OpenAI TTS model (default: gpt-4o-mini-tts)
-  ttsVoice: string;       // Voice ID: alloy, echo, fable, onyx, nova, shimmer
+  ttsProvider: string;    // TTS provider: "openai" or "gemini" (default: openai)
+  ttsModel: string;       // TTS model: OpenAI (gpt-4o-mini-tts) or Gemini (gemini-2.5-flash-tts-preview, gemini-2.5-pro-tts-preview, gemini-3.1-flash-tts-preview)
+  ttsVoice: string;       // Voice ID (see voice lists below)
   ttsInstructions: string; // Optional instructions for voice style/tone
+  //
+  // OpenAI voices: alloy, ash, coral, echo, fable, nova, onyx, sage, shimmer, verse, marin, cedar
+  // Gemini voices: Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Callirrhoe,
+  //   Autonoe, Enceladus, Iapetus, Umbriel, Algieba, Despina, Erinome, Algenib,
+  //   Rasalgethi, Laomedeia, Achernar, Alnilam, Schedar, Gacrux, Pulcherrima,
+  //   Achird, Zubenelgenubi, Vindemiatrix, Sadachbia, Sadaltager, Sulafat
 
   // Vision model (for screen analysis)
   visionModel: string;    // Gemini model for vision (default: gemini-2.0-flash)
@@ -195,6 +202,7 @@ export function loadConfig(): SymbioConfig {
     openaiApiKey: getEnv("OPENAI_API_KEY", ""),
 
     // TTS (Text-to-Speech) configuration
+    ttsProvider: getEnv("TTS_PROVIDER", "openai"),
     ttsModel: getEnv("TTS_MODEL", "gpt-4o-mini-tts"),
     ttsVoice: getEnv("TTS_VOICE", "fable"),
     ttsInstructions: getEnv("TTS_INSTRUCTIONS", ""),

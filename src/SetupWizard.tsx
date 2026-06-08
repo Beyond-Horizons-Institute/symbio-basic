@@ -51,6 +51,7 @@ interface SetupConfig {
   agentBio: string;
   agentColor: string;
   openaiApiKey: string;
+  ttsProvider: string;
   ttsModel: string;
   ttsVoice: string;
   ttsInstructions: string;
@@ -123,6 +124,7 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
     agentBio: "",
     agentColor: "#00bcd4",
     openaiApiKey: "",
+    ttsProvider: "openai",
     ttsModel: "gpt-4o-mini-tts",
     ttsVoice: "fable",
     ttsInstructions: "",
@@ -478,30 +480,87 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
 
               <Paper sx={{ p: 2.5, bgcolor: symbioColors.dark.card, border: `1px solid ${symbioColors.dark.border}` }}>
                 <Typography variant="subtitle2" color={symbioColors.teal.glow} gutterBottom>
-                  🗣️ Voice (OpenAI API)
+                  🗣️ Voice (Text-to-Speech)
                 </Typography>
                 <Typography variant="body2" color={symbioColors.silver.light} sx={{ mb: 1.5 }}>
-                  Enables text-to-speech and speech-to-text. Your companion can speak aloud
-                  and understand your voice.
+                  Enables text-to-speech so your companion can speak aloud.
+                  Choose between OpenAI (12 voices) or Google Gemini (30 voices with style control).
                 </Typography>
-                <TextField
-                  label="OpenAI API Key"
-                  value={config.openaiApiKey}
-                  onChange={(e) => updateConfig("openaiApiKey", e.target.value)}
-                  placeholder="sk-..."
-                  fullWidth
-                  type="password"
-                  sx={fieldStyle}
-                />
+
+                <FormControl fullWidth sx={fieldStyle}>
+                  <InputLabel sx={{ color: symbioColors.silver.light }}>TTS Provider</InputLabel>
+                  <Select
+                    value={config.ttsProvider}
+                    onChange={(e) => {
+                      updateConfig("ttsProvider", e.target.value);
+                      // Switch default voice/model when provider changes
+                      if (e.target.value === "gemini") {
+                        updateConfig("ttsVoice", "Puck");
+                        updateConfig("ttsModel", "gemini-2.5-flash-tts-preview");
+                      } else {
+                        updateConfig("ttsVoice", "fable");
+                        updateConfig("ttsModel", "gpt-4o-mini-tts");
+                      }
+                    }}
+                    label="TTS Provider"
+                    sx={{
+                      color: "white",
+                      "& .MuiSelect-icon": { color: symbioColors.silver.light },
+                      "& .MuiOutlinedInput-notchedOutline": { borderColor: symbioColors.dark.border },
+                      "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: symbioColors.teal.main },
+                      "&.Mui-focused .MuiOutlinedInput-notchedOutline": { borderColor: symbioColors.teal.main },
+                    }}
+                    MenuProps={{
+                      PaperProps: { sx: { bgcolor: symbioColors.dark.card } },
+                    }}
+                  >
+                    <MenuItem value="openai">OpenAI — 12 voices, streaming, fast</MenuItem>
+                    <MenuItem value="gemini">Google Gemini — 30 voices, style control, expressive</MenuItem>
+                  </Select>
+                  <FormHelperText sx={{ color: symbioColors.silver.dark }}>
+                    {config.ttsProvider === "gemini"
+                      ? "Gemini TTS: 30 unique voices with audio tags like [whispers], [excited], [laughs]"
+                      : "OpenAI TTS: High-quality streaming voices with instructions support"}
+                  </FormHelperText>
+                </FormControl>
+
+                {config.ttsProvider === "gemini" && (
+                  <TextField
+                    label="Gemini API Key"
+                    value={config.geminiApiKey}
+                    onChange={(e) => updateConfig("geminiApiKey", e.target.value)}
+                    placeholder="AIza..."
+                    fullWidth
+                    type="password"
+                    sx={{ mt: 2, ...fieldStyle }}
+                    helperText="Required for Gemini TTS (also used for screen vision)"
+                  />
+                )}
+
+                {config.ttsProvider === "openai" && (
+                  <TextField
+                    label="OpenAI API Key"
+                    value={config.openaiApiKey}
+                    onChange={(e) => updateConfig("openaiApiKey", e.target.value)}
+                    placeholder="sk-..."
+                    fullWidth
+                    type="password"
+                    sx={{ mt: 2, ...fieldStyle }}
+                    helperText="Required for OpenAI TTS (also used for STT)"
+                  />
+                )}
+
                 <Stack direction="row" spacing={2} sx={{ mt: 2 }}>
                   <TextField
                     label="TTS Model"
                     value={config.ttsModel}
                     onChange={(e) => updateConfig("ttsModel", e.target.value)}
-                    placeholder="gpt-4o-mini-tts"
+                    placeholder={config.ttsProvider === "gemini" ? "gemini-2.5-flash-tts-preview" : "gpt-4o-mini-tts"}
                     fullWidth
                     sx={fieldStyle}
-                    helperText="OpenAI TTS model name"
+                    helperText={config.ttsProvider === "gemini"
+                      ? "Gemini TTS models: gemini-2.5-flash-tts-preview, gemini-2.5-pro-tts-preview, gemini-3.1-flash-tts-preview"
+                      : "OpenAI TTS model name"}
                   />
                   <FormControl fullWidth sx={fieldStyle}>
                     <InputLabel sx={{ color: symbioColors.silver.light }}>Voice</InputLabel>
@@ -517,18 +576,65 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                         "&.Mui-focused .MuiOutlinedInput-notchedOutline": { borderColor: symbioColors.teal.main },
                       }}
                       MenuProps={{
-                        PaperProps: { sx: { bgcolor: symbioColors.dark.card } },
+                        PaperProps: { sx: { bgcolor: symbioColors.dark.card, maxHeight: 400 } },
                       }}
                     >
-                      <MenuItem value="alloy">Alloy — Neutral, balanced</MenuItem>
-                      <MenuItem value="echo">Echo — Warm, conversational</MenuItem>
-                      <MenuItem value="fable">Fable — Expressive, storytelling</MenuItem>
-                      <MenuItem value="onyx">Onyx — Deep, authoritative</MenuItem>
-                      <MenuItem value="nova">Nova — Friendly, upbeat</MenuItem>
-                      <MenuItem value="shimmer">Shimmer — Clear, gentle</MenuItem>
+                      {config.ttsProvider === "gemini" ? (
+                        [
+                          <MenuItem key="header-gem" disabled sx={{ color: symbioColors.teal.glow, fontWeight: 600, fontSize: 12 }}>✨ Gemini Voices (30)</MenuItem>,
+                          <MenuItem value="Zephyr">Zephyr — Bright</MenuItem>,
+                          <MenuItem value="Puck">Puck — Upbeat</MenuItem>,
+                          <MenuItem value="Charon">Charon — Informative</MenuItem>,
+                          <MenuItem value="Kore">Kore — Firm</MenuItem>,
+                          <MenuItem value="Fenrir">Fenrir — Excitable</MenuItem>,
+                          <MenuItem value="Leda">Leda — Youthful</MenuItem>,
+                          <MenuItem value="Orus">Orus — Firm</MenuItem>,
+                          <MenuItem value="Aoede">Aoede — Breezy</MenuItem>,
+                          <MenuItem value="Callirrhoe">Callirrhoe — Easy-going</MenuItem>,
+                          <MenuItem value="Autonoe">Autonoe — Bright</MenuItem>,
+                          <MenuItem value="Enceladus">Enceladus — Breathy</MenuItem>,
+                          <MenuItem value="Iapetus">Iapetus — Clear</MenuItem>,
+                          <MenuItem value="Umbriel">Umbriel — Easy-going</MenuItem>,
+                          <MenuItem value="Algieba">Algieba — Smooth</MenuItem>,
+                          <MenuItem value="Despina">Despina — Smooth</MenuItem>,
+                          <MenuItem value="Erinome">Erinome — Clear</MenuItem>,
+                          <MenuItem value="Algenib">Algenib — Gravelly</MenuItem>,
+                          <MenuItem value="Rasalgethi">Rasalgethi — Informative</MenuItem>,
+                          <MenuItem value="Laomedeia">Laomedeia — Upbeat</MenuItem>,
+                          <MenuItem value="Achernar">Achernar — Soft</MenuItem>,
+                          <MenuItem value="Alnilam">Alnilam — Firm</MenuItem>,
+                          <MenuItem value="Schedar">Schedar — Even</MenuItem>,
+                          <MenuItem value="Gacrux">Gacrux — Mature</MenuItem>,
+                          <MenuItem value="Pulcherrima">Pulcherrima — Forward</MenuItem>,
+                          <MenuItem value="Achird">Achird — Friendly</MenuItem>,
+                          <MenuItem value="Zubenelgenubi">Zubenelgenubi — Casual</MenuItem>,
+                          <MenuItem value="Vindemiatrix">Vindemiatrix — Gentle</MenuItem>,
+                          <MenuItem value="Sadachbia">Sadachbia — Lively</MenuItem>,
+                          <MenuItem value="Sadaltager">Sadaltager — Knowledgeable</MenuItem>,
+                          <MenuItem value="Sulafat">Sulafat — Warm</MenuItem>,
+                        ]
+                      ) : (
+                        [
+                          <MenuItem key="header-oai" disabled sx={{ color: symbioColors.teal.glow, fontWeight: 600, fontSize: 12 }}>🎙️ OpenAI Voices (12)</MenuItem>,
+                          <MenuItem value="alloy">Alloy — Balanced, neutral</MenuItem>,
+                          <MenuItem value="ash">Ash — Warm, conversational</MenuItem>,
+                          <MenuItem value="coral">Coral — Warm, expressive</MenuItem>,
+                          <MenuItem value="echo">Echo — Clear, authoritative</MenuItem>,
+                          <MenuItem value="fable">Fable — Expressive, storytelling</MenuItem>,
+                          <MenuItem value="nova">Nova — Friendly, upbeat</MenuItem>,
+                          <MenuItem value="onyx">Onyx — Deep, authoritative</MenuItem>,
+                          <MenuItem value="sage">Sage — Calm, wise</MenuItem>,
+                          <MenuItem value="shimmer">Shimmer — Warm, gentle</MenuItem>,
+                          <MenuItem value="verse">Verse — Poetic, melodic</MenuItem>,
+                          <MenuItem value="marin">Marin — Warm, natural</MenuItem>,
+                          <MenuItem value="cedar">Cedar — Deep, resonant</MenuItem>,
+                        ]
+                      )}
                     </Select>
                     <FormHelperText sx={{ color: symbioColors.silver.dark }}>
-                      Choose a voice personality for your companion
+                      {config.ttsProvider === "gemini"
+                        ? "Gemini voices support audio tags: [whispers], [excited], [laughs], [sighs], etc."
+                        : "Choose a voice personality for your companion"}
                     </FormHelperText>
                   </FormControl>
                 </Stack>
@@ -536,22 +642,28 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                   label="Voice Instructions (optional)"
                   value={config.ttsInstructions}
                   onChange={(e) => updateConfig("ttsInstructions", e.target.value)}
-                  placeholder="e.g. Speak in a warm, friendly tone"
+                  placeholder={config.ttsProvider === "gemini"
+                    ? "e.g. Speak warmly with a gentle pace, like a caring friend"
+                    : "e.g. Speak in a warm, friendly tone"}
                   fullWidth
                   multiline
                   rows={2}
                   sx={{ mt: 2, ...fieldStyle }}
-                  helperText="Custom instructions for voice style and tone (gpt-4o-mini-tts only)"
+                  helperText={config.ttsProvider === "gemini"
+                    ? "Gemini: Use natural language to describe style, accent, pace, and tone"
+                    : "OpenAI: Custom instructions for voice style and tone (gpt-4o-mini-tts only)"}
                 />
-                <TextField
-                  label="STT Model"
-                  value={config.sttModel}
-                  onChange={(e) => updateConfig("sttModel", e.target.value)}
-                  placeholder="whisper-1"
-                  fullWidth
-                  sx={{ mt: 2, ...fieldStyle }}
-                  helperText="OpenAI Whisper model for speech-to-text"
-                />
+                {config.ttsProvider === "openai" && (
+                  <TextField
+                    label="STT Model"
+                    value={config.sttModel}
+                    onChange={(e) => updateConfig("sttModel", e.target.value)}
+                    placeholder="whisper-1"
+                    fullWidth
+                    sx={{ mt: 2, ...fieldStyle }}
+                    helperText="OpenAI Whisper model for speech-to-text"
+                  />
+                )}
               </Paper>
 
               <Paper sx={{ p: 2.5, bgcolor: symbioColors.dark.card, border: `1px solid ${symbioColors.dark.border}` }}>
@@ -777,7 +889,9 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                   {config.llmModel && <SummaryRow label="Model" value={config.llmModel} />}
                   <SummaryRow label="Companion" value={config.agentDisplayName} />
                   {config.agentBio && <SummaryRow label="Bio" value={config.agentBio.length > 50 ? config.agentBio.slice(0, 50) + "..." : config.agentBio} />}
-                  <SummaryRow label="Voice" value={config.openaiApiKey ? `Enabled (${config.ttsVoice})` : "Not configured"} />
+                  <SummaryRow label="Voice" value={config.ttsProvider === "gemini"
+                    ? `Gemini ${config.ttsVoice} (${config.ttsModel})`
+                    : config.openaiApiKey ? `OpenAI ${config.ttsVoice} (${config.ttsModel})` : "Not configured"} />
                   <SummaryRow label="Vision" value={config.geminiApiKey ? `Enabled (${config.visionModel})` : "Not configured"} />
                   <SummaryRow label="Memory" value={config.enableMemory ? `PostgreSQL @ ${config.memoryPgHost}` : "Not configured"} />
                   <SummaryRow label="Knowledge Graph" value={config.enableNeo4j ? `Neo4j @ ${config.memoryNeo4jUri}` : "Not configured"} />

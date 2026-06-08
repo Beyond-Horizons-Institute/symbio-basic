@@ -155,6 +155,11 @@ interface SymbioAPI {
     tools: Array<{ name: string; description: string; category: string }>;
   }>>;
   mcpTriggerTool: (toolName: string, instruction: string) => Promise<{ message: string; toolCalls?: unknown[] }>;
+  // TTS voice options
+  ttsVoices: () => Promise<{
+    provider: string;
+    voices: Array<{ name: string; style: string }>;
+  }>;
   // Animation
   playAnimation: (animation: string) => void;
   // Event listeners
