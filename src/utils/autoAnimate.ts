@@ -131,8 +131,6 @@ const ACTION_MAP: Record<string, AnimationTarget> = {
   plots: { category: "emote", specific: "plotting" },
   plotting: { category: "emote", specific: "plotting" },
   scheming: { category: "emote", specific: "plotting" },
-  shrug: { category: "emote" },
-  shrugs: { category: "emote" },
   "dramatic pose": { category: "emote", specific: "dramatic-pose" },
   "poses dramatically": { category: "emote", specific: "dramatic-pose" },
   "strikes a pose": { category: "emote", specific: "dramatic-pose" },
