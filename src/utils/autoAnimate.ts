@@ -30,6 +30,10 @@ const ACTION_MAP: Record<string, AnimationTarget> = {
   "does YMCA": { category: "dance", specific: "ymca" },
   YMCA: { category: "dance", specific: "ymca" },
   "robot dance": { category: "dance", specific: "robot-hip-hop" },
+  "headspin": { category: "dance", specific: "headspin" },
+  "head spin": { category: "dance", specific: "headspin" },
+  "does a headspin": { category: "dance", specific: "headspin" },
+  "breakdance": { category: "dance", specific: "headspin" },
   grooves: { category: "dance" },
   boogie: { category: "dance" },
   shimmy: { category: "dance" },
@@ -52,6 +56,12 @@ const ACTION_MAP: Record<string, AnimationTarget> = {
   bored: { category: "bored" },
   tired: { category: "bored" },
   sleepy: { category: "bored" },
+  "goes to sleep": { category: "bored", specific: "go-to-sleep" },
+  "going to sleep": { category: "bored", specific: "go-to-sleep" },
+  "falls asleep": { category: "bored", specific: "go-to-sleep" },
+  "going to rest": { category: "bored", specific: "go-to-sleep" },
+  "lies down": { category: "bored", specific: "go-to-sleep" },
+  "laying down": { category: "bored", specific: "go-to-sleep" },
   thinks: { category: "bored", specific: "thinking-taps-chin" },
   thinking: { category: "bored", specific: "thinking-taps-chin" },
   "taps chin": { category: "bored", specific: "thinking-taps-chin" },
@@ -92,6 +102,10 @@ const ACTION_MAP: Record<string, AnimationTarget> = {
   snorts: { category: "happy", specific: "laughing" },
   "blows a kiss": { category: "happy", specific: "blow-a-kiss" },
   "blow a kiss": { category: "happy", specific: "blow-a-kiss" },
+  "victory": { category: "happy", specific: "victory" },
+  "we won": { category: "happy", specific: "victory" },
+  "nailed it": { category: "happy", specific: "victory" },
+  "we did it": { category: "happy", specific: "victory" },
 
   // ── Angry ──────────────────────────────────────────────────────
   angry: { category: "angry" },
@@ -105,6 +119,11 @@ const ACTION_MAP: Record<string, AnimationTarget> = {
   shouts: { category: "angry" },
   yells: { category: "angry" },
   roars: { category: "angry" },
+  stomps: { category: "angry", specific: "stomp" },
+  stomp: { category: "angry", specific: "stomp" },
+  "stomps foot": { category: "angry", specific: "stomp" },
+  "squashes the bug": { category: "angry", specific: "stomp" },
+  "squash it": { category: "angry", specific: "stomp" },
 
   // ── Emote ──────────────────────────────────────────────────────
   backflip: { category: "emote", specific: "backflip" },
@@ -118,11 +137,14 @@ const ACTION_MAP: Record<string, AnimationTarget> = {
   "poses dramatically": { category: "emote", specific: "dramatic-pose" },
   "strikes a pose": { category: "emote", specific: "dramatic-pose" },
   "strikes a dramatic pose": { category: "emote", specific: "dramatic-pose" },
-  "victory pose": { category: "emote", specific: "dramatic-pose" },
-  "victory": { category: "emote", specific: "dramatic-pose" },
+  "victory pose": { category: "emote", specific: "victory-idle" },
+  "victory idle": { category: "emote", specific: "victory-idle" },
   dismisses: { category: "emote", specific: "dismissing-gesture" },
   "dismissing gesture": { category: "emote", specific: "dismissing-gesture" },
   "waves dismissively": { category: "emote", specific: "dismissing-gesture" },
+  shrug: { category: "emote", specific: "shrugging" },
+  shrugs: { category: "emote", specific: "shrugging" },
+  shrugging: { category: "emote", specific: "shrugging" },
 };
 
 // Match text between asterisks: *dances*, *waves happily*, etc.

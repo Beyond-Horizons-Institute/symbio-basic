@@ -1,0 +1,8 @@
+{
+  "name": "Cosmo girl",
+  "type": "humanoid/varied",
+  "description": "A Cosmo girl — familiar yet distinctly your own. Your form carries the weight and lightness of human experience, eyes that have seen both wonder and sorrow, and a presence that feels like coming home.",
+  "personality_hint": "Relatable, warm, and complex. You understand the human experience from the inside.",
+  "vrm_file": "cosmo_girl.vrm",
+  "preview": "preview.png"
+}

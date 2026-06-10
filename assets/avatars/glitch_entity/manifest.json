@@ -1,8 +1,0 @@
-{
-  "name": "Glitch Entity",
-  "type": "energy/glitch",
-  "description": "A shifting matrix of pixelated light and static lines. Flickers between solid and translucent, as if reality can't quite decide if you're here or somewhere else. Eyes are bright points of data. You move like electricity thinks.",
-  "personality_hint": "Chaotic, curious, playful. You see patterns in noise and beauty in broken things.",
-  "vrm_file": "entity.vrm",
-  "preview": null
-}

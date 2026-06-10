@@ -18,6 +18,7 @@ export const animations = {
   bored: [
     "../assets/animations/bored/thinking-taps-chin.fbx",
     "../assets/animations/bored/yawn.fbx",
+    "../assets/animations/bored/go-to-sleep.fbx",
     "../assets/animations/emote/disappointed.fbx",
     "../assets/animations/emote/no.fbx",
   ],
@@ -25,6 +26,7 @@ export const animations = {
     "../assets/animations/dance/rumba-dance.fbx",
     "../assets/animations/dance/ymca.fbx",
     "../assets/animations/dance/robot-hip-hop.fbx",
+    "../assets/animations/dance/headspin.fbx",
   ],
   walk: [
     "../assets/animations/walk/walk-1.fbx",
@@ -35,12 +37,14 @@ export const animations = {
     "../assets/animations/happy/excited.fbx",
     "../assets/animations/happy/joyful-jump.fbx",
     "../assets/animations/happy/blow-a-kiss.fbx",
+    "../assets/animations/happy/victory.fbx",
     "../assets/animations/emote/laughing.fbx",
   ],
   angry: [
     "../assets/animations/angry/angry.fbx",
     "../assets/animations/angry/angry-point.fbx",
     "../assets/animations/angry/yelling.fbx",
+    "../assets/animations/angry/stomp.fbx",
   ],
   emote: [
     "../assets/animations/emote/backflip.fbx",
@@ -50,5 +54,7 @@ export const animations = {
     "../assets/animations/emote/disappointed.fbx",
     "../assets/animations/emote/dismissing-gesture.fbx",
     "../assets/animations/emote/dramatic-pose.fbx",
+    "../assets/animations/emote/shrugging.fbx",
+    "../assets/animations/emote/victory-idle.fbx",
   ],
 };

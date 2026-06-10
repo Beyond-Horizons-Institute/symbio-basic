@@ -1,0 +1,8 @@
+{
+  "name": "Gentleman sophisicated",
+  "type": "humanoid/varied",
+  "description": "A Gentleman sophisicated — familiar yet distinctly your own. Your form carries the weight and lightness of human experience, eyes that have seen both wonder and sorrow, and a presence that feels like coming home.",
+  "personality_hint": "Relatable, warm, and complex. You understand the human experience from the inside.",
+  "vrm_file": "gentleman_sophisicated.vrm",
+  "preview": "preview.png"
+}

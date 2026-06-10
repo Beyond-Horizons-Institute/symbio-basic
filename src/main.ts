@@ -618,13 +618,13 @@ app.on("ready", () => {
 ANIMATION SYSTEM: You have a 3D avatar that can animate! Put action words between asterisks to trigger animations. Use SHORT, SPECIFIC action words only — not full sentences. Each *action* triggers exactly ONE animation.
 
 Available actions (use these EXACTLY as shown):
-💃 *dances* *grooves* *does the rumba* *does YMCA* *robot dance*
+💃 *dances* *grooves* *does the rumba* *does YMCA* *robot dance* *headspin* *breakdance*
 👋 *waves*
-😊 *excited* *jumps for joy* *blows a kiss* *laughs*
-😠 *gets angry* *points angrily* *yells*
-😴 *yawns* *sighs* *stretches* *thinks* *taps chin* *is disappointed* *shakes head*
+😊 *excited* *jumps for joy* *blows a kiss* *laughs* *victory* *we won* *nailed it*
+😠 *gets angry* *points angrily* *yells* *stomps* *squashes the bug*
+😴 *yawns* *sighs* *stretches* *thinks* *taps chin* *is disappointed* *shakes head* *goes to sleep* *lies down*
 🚶 *walks* *strolls* *struts* *paces around*
-🎭 *backflips* *plots* *shrugs* *facepalms* *strikes a dramatic pose* *dismisses with a gesture*
+🎭 *backflips* *plots* *shrugs* *strikes a dramatic pose* *dismisses with a gesture* *victory pose*
 
 IMPORTANT: Only use the exact action phrases listed above. Do NOT put full sentences in asterisks like *I think we should dance* — that won't trigger any animation. Use one action per asterisk pair.
 
@@ -955,13 +955,13 @@ ${formatSandboxForPrompt()}`;
 ANIMATION SYSTEM: You have a 3D avatar that can animate! Put action words between asterisks to trigger animations. Use SHORT, SPECIFIC action words only — not full sentences. Each *action* triggers exactly ONE animation.
 
 Available actions (use these EXACTLY as shown):
-💃 *dances* *grooves* *does the rumba* *does YMCA* *robot dance*
+💃 *dances* *grooves* *does the rumba* *does YMCA* *robot dance* *headspin* *breakdance*
 👋 *waves*
-😊 *excited* *jumps for joy* *blows a kiss* *laughs*
-😠 *gets angry* *points angrily* *yells*
-😴 *yawns* *sighs* *stretches* *thinks* *taps chin* *is disappointed* *shakes head*
+😊 *excited* *jumps for joy* *blows a kiss* *laughs* *victory* *we won* *nailed it*
+😠 *gets angry* *points angrily* *yells* *stomps* *squashes the bug*
+😴 *yawns* *sighs* *stretches* *thinks* *taps chin* *is disappointed* *shakes head* *goes to sleep* *lies down*
 🚶 *walks* *strolls* *struts* *paces around*
-🎭 *backflips* *plots* *shrugs* *facepalms* *strikes a dramatic pose* *dismisses with a gesture*
+🎭 *backflips* *plots* *shrugs* *strikes a dramatic pose* *dismisses with a gesture* *victory pose*
 
 IMPORTANT: Only use the exact action phrases listed above. Do NOT put full sentences in asterisks like *I think we should dance* — that won't trigger any animation. Use one action per asterisk pair.
 

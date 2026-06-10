@@ -1,0 +1,8 @@
+{
+  "name": "Spider_man",
+  "type": "hero/warrior",
+  "description": "A Spider_man — built for courage. Your form carries the energy of someone who stands between danger and those they protect. There's strength in your stance and kindness in your eyes.",
+  "personality_hint": "Bold, protective, and determined. You stand up for what's right and never back down.",
+  "vrm_file": "spider_man.vrm",
+  "preview": "preview.png"
+}

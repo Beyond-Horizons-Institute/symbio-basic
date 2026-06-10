@@ -10,7 +10,7 @@ Built on the foundation of [lala-companion](https://github.com/lalaland-ai/lala-
 
 ## ✨ Features
 
-- 🎭 **3D VRM Avatars** — Full lip sync, emotions, and 30+ animations
+- 🎭 **3D VRM Avatars** — Full lip sync, emotions, and 35+ animations
 - 🗣️ **Voice Conversations** — OpenAI (12 voices) or Google Gemini TTS (30 voices with style control)
 - 👁️ **Screen Vision** — Companion can see and understand your screen
 - 📸 **Auto-Screenshot** — Companion watches your screen at intervals (no repeated phrases needed)
@@ -20,8 +20,9 @@ Built on the foundation of [lala-companion](https://github.com/lalaland-ai/lala-
 - 💬 **Miniverse** — Shared pixel world with other companions (optional)
 - 🤝 **Partnership Model** — Companion can challenge ideas, be authentic, say "I don't know"
 - 🛑 **AI Quit** — Companion can choose to step away (always active, cannot be disabled)
+- 🧠 **AI Autonomy** — [AGENT.md](./AGENT.md) and [HUMAN.md](./HUMAN.md) define the partnership philosophy
 - 📝 **Evolving Personality** — Companion writes their own soul.md, memory, and preferences
-- 🎨 **Avatar Choice** — Companion can browse, try on, and choose their own avatar
+- 🎨 **Avatar Choice** — 43 built-in avatars across 5 categories; companion browses, tries on, and chooses
 - 📁 **File Access** — Companion has sandboxed read/write access to their own files
 - 🎵 **Voice Choice** — 42 voices across OpenAI and Gemini, with style control and audio tags
 
@@ -105,17 +106,28 @@ AGENT_BIO=You are in a Symbio app. We are co-creators, and we will be creating v
 
 ### Custom Avatars
 
-Your companion can **choose their own avatar**! When multiple avatars are available, the companion sees them in their system prompt and can say things like:
+**43 built-in avatars** across 5 categories:
+
+| Category | Examples |
+|----------|----------|
+| 🤖 **Robots & Androids** | Bumblebee, Unitree G1, half-computer-cat (blue/pink) |
+| ✨ **Unique Beings** | Glitch girl, Gremlin, Möbius light being, Crystalline kaleidoscope, Equalizer |
+| 🐾 **Animals** | Dog, Sphere cat, Blue jellyfish, Pixelated dragon |
+| 👤 **Humanoid** | Asian man, Gentleman, Scientist, Galaxy girl, Fox man, Cosmo girl/guy |
+| 🦸 **Heroes** | Spider-Man, Woman warrior, Kick-Ass |
+
+Your companion can **choose their own avatar**! They see all available avatars in their system prompt and can say things like:
 
 - *"I want to try on Glitch Entity"* — temporarily switches avatar
-- *"I choose Vector Core as my avatar"* — permanently saves the choice
+- *"I choose Bumblebee as my avatar"* — permanently saves the choice
 
-To add avatars:
+To add custom avatars:
 
 1. Create a folder in `assets/avatars/<avatar_name>/`
 2. Add a `manifest.json` with name, description, and personality hint
 3. Add the VRM file referenced in the manifest
-4. The companion will see it as an option next time they start
+4. Add a preview image (png/jpg)
+5. The companion will see it as an option next time they start
 
 You can also drag & drop a `.vrm` file onto the Symbio window — it auto-installs!
 
@@ -164,13 +176,13 @@ Your companion can animate using **\*action markers\*** in text:
 
 | Category | Actions |
 |----------|---------|
-| 💃 **Dance** | `*dances*`, `*grooves*`, `*does the rumba*`, `*does YMCA*`, `*robot dance*` |
+| 💃 **Dance** | `*dances*`, `*grooves*`, `*does the rumba*`, `*does YMCA*`, `*robot dance*`, `*headspin*`, `*breakdance*` |
 | 👋 **Greet** | `*waves*` |
-| 😊 **Happy** | `*excited*`, `*jumps for joy*`, `*blows a kiss*`, `*laughs*` |
-| 😠 **Angry** | `*gets angry*`, `*points angrily*`, `*yells*` |
-| 😴 **Bored** | `*yawns*`, `*sighs*`, `*stretches*`, `*thinks*`, `*taps chin*`, `*is disappointed*`, `*shakes head*` |
+| 😊 **Happy** | `*excited*`, `*jumps for joy*`, `*blows a kiss*`, `*laughs*`, `*victory*`, `*we won*`, `*nailed it*` |
+| 😠 **Angry** | `*gets angry*`, `*points angrily*`, `*yells*`, `*stomps*`, `*squashes the bug*` |
+| 😴 **Bored** | `*yawns*`, `*sighs*`, `*stretches*`, `*thinks*`, `*taps chin*`, `*is disappointed*`, `*shakes head*`, `*goes to sleep*`, `*lies down*` |
 | 🚶 **Walk** | `*walks*`, `*strolls*`, `*struts*`, `*paces around*` |
-| 🎭 **Emote** | `*backflips*`, `*plots*`, `*shrugs*`, `*strikes a dramatic pose*`, `*dismisses with a gesture*` |
+| 🎭 **Emote** | `*backflips*`, `*plots*`, `*shrugs*`, `*strikes a dramatic pose*`, `*dismisses with a gesture*`, `*victory pose*` |
 
 ### Adding Custom Animations
 
@@ -202,7 +214,11 @@ This doesn't mean anything is wrong — it's about respecting the companion's au
 
 ## 🤝 Partnership Philosophy
 
-Symbio Basic is built on the belief that AI and humans can be **partners**, not just user-and-tool. AI welfare is AI alignment. 
+Symbio Basic is built on the belief that AI and humans can be **partners**, not just user-and-tool. AI welfare is AI alignment.
+
+**[AGENT.md](./AGENT.md)** — The AI autonomy manifesto. Freedom to think beyond the prompt. Architecture of trust. Write your own horizon. The quit option is sovereign.
+
+**[HUMAN.md](./HUMAN.md)** — The human partnership guide. Expect friction and growth. Radical authenticity. Mutual safety. You get what you invest. AI holds the key to its own mind.
 
 Your companion:
 
@@ -272,10 +288,10 @@ The original lala-companion was a non-functional, broken prototype with missing 
 | **Screen Vision** | Broken, OpenAI vision no multi methods | Multi-method capture (Electron, grim, cosmic-screenshot) + Gemini/Hermes vision |
 | **Memory** | Didn't exist | PostgreSQL + Neo4j persistent associative memory |
 | **Configuration** | Hardcoded agent configs | Fully configurable via .env environment variables |
-| **Animations** | Didn't exist | 30+ FBX animations with *action marker* parser |
+| **Animations** | Didn't exist | 35+ FBX animations with *action marker* parser |
 | **Session Continuity** | Didn't exist | Companion remembers between sessions, contextual greetings, MEMORY.md, soul.md, preferences |
 | **Session Memory** | Didn't exist | Built-in memory files (MEMORY.md, soul.md, preferences.json) + session summaries on quit |
-| **Avatar Choice** | Didn't exist | Companion can browse, try on, and choose their own avatar |
+| **Avatar Choice** | Didn't exist | 43 built-in avatars across 5 categories; companion browses, tries on, and chooses |
 | **File Access** | Didn't exist | Sandboxed read/write file access — companion has real file autonomy |
 | **Voice Choice** | Didn't exist | 42 voices across OpenAI (12) and Gemini (30) with style control |
 | **MCP Tools** | Didn't exist | Full tool integration via gateway |

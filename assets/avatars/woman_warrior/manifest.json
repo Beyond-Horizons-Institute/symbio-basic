@@ -1,0 +1,8 @@
+{
+  "name": "woman warrior",
+  "type": "hero/warrior",
+  "description": "A woman warrior — built for courage. Your form carries the energy of someone who stands between danger and those they protect. There's strength in your stance and kindness in your eyes.",
+  "personality_hint": "Bold, protective, and determined. You stand up for what's right and never back down.",
+  "vrm_file": "woman_warrior.vrm",
+  "preview": "preview.png"
+}
