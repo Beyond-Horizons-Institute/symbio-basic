@@ -100,20 +100,28 @@ function stripPathPrefix(requestedPath: string): { root: string | null; path: st
  * memoryDir + "memory/soul.md" = "memory/memory/soul.md".
  */
 function validatePath(requestedPath: string, allowedRoot: string): string | null {
-  // Strip known prefix if it matches this root
+  // Determine which root this path belongs to based on its prefix.
+  // e.g., "memory/soul.md" belongs to memory, "companion-sandbox/notes.md" belongs to sandbox.
+  const { root: prefixRoot, path: strippedPath } = stripPathPrefix(requestedPath);
+
+  // Determine which root we're validating against
+  const rootName = allowedRoot.endsWith("companion-sandbox") ? "sandbox"
+    : allowedRoot.endsWith("memory") ? "memory"
+    : allowedRoot.endsWith("assets") ? "assets"
+    : null;
+
+  // If the path has a known prefix (memory/, companion-sandbox/, assets/),
+  // it should ONLY be valid for the matching root. A path like
+  // "companion-sandbox/test.txt" should NOT resolve to memoryDir.
+  if (prefixRoot && rootName && prefixRoot !== rootName) {
+    return null; // Path belongs to a different root — reject it
+  }
+
+  // If the prefix matches this root, strip it to avoid double-nesting
   // e.g., "memory/soul.md" against memoryDir should become just "soul.md"
   let cleanPath = requestedPath;
-  const { root: prefixRoot, path: strippedPath } = stripPathPrefix(requestedPath);
-  if (prefixRoot) {
-    // Check if the prefix matches the root we're validating against
-    const rootName = allowedRoot.endsWith("memory") ? "memory"
-      : allowedRoot.endsWith("companion-sandbox") ? "sandbox"
-      : allowedRoot.endsWith("assets") ? "assets"
-      : null;
-    if (rootName && prefixRoot === rootName) {
-      // Prefix matches this root — strip it to avoid double-nesting
-      cleanPath = strippedPath;
-    }
+  if (prefixRoot && rootName && prefixRoot === rootName) {
+    cleanPath = strippedPath;
   }
 
   // Normalize the path to resolve any ../ or ./ components
@@ -289,10 +297,10 @@ export function sandboxWriteFile(requestedPath: string, content: string): FileRe
   const sandboxDir = getSandboxDir();
   const memoryDir = getMemoryDir();
 
-  // Try sandbox first
-  // Try memory first (memory paths should go to memory dir, not sandbox/memory/)
-  // then sandbox. This prevents "memory/MEMORY.md" from resolving to
-  // sandboxDir/memory/MEMORY.md instead of the actual memory directory.
+  // Try memory first (paths with "memory/" prefix only validate against memory root)
+  // then sandbox (paths with "companion-sandbox/" prefix only validate against sandbox root).
+  // validatePath now rejects paths whose prefix doesn't match the root,
+  // so "companion-sandbox/test.txt" won't accidentally route to memory.
   let safePath = validatePath(requestedPath, memoryDir);
   let root = "memory";
 
