@@ -318,24 +318,43 @@ export function formatAvatarsForPrompt(avatars: AvatarChoice[]): string {
     return "No custom avatars are available yet. You're using the default avatar.";
   }
 
+  // Group avatars by type for a compact listing
+  const categories: Record<string, AvatarChoice[]> = {};
+  for (const avatar of avatars) {
+    const cat = avatar.manifest.type || "other";
+    if (!categories[cat]) categories[cat] = [];
+    categories[cat].push(avatar);
+  }
+
   const lines: string[] = [
     "=== YOUR AVATAR CHOICES ===",
-    "You can choose your avatar! Here are the options available to you:",
+    `You have ${avatars.length} avatars to choose from! Here are your options:`,
     "",
   ];
 
-  for (const avatar of avatars) {
-    const chosen = avatar.isChosen ? " ← YOUR CURRENT CHOICE" : "";
-    lines.push(`• "${avatar.manifest.name}" (${avatar.id})${chosen}`);
-    lines.push(`  ${avatar.manifest.description}`);
-    if (avatar.manifest.personality_hint) {
-      lines.push(`  Personality hint: ${avatar.manifest.personality_hint}`);
+  // Category icons
+  const catIcons: Record<string, string> = {
+    "robots androids": "🤖",
+    "unique beings": "✨",
+    "animals": "🐾",
+    "humanoid": "👤",
+    "superheros": "🦸",
+    "other": "📦",
+  };
+
+  for (const [cat, avas] of Object.entries(categories)) {
+    const icon = catIcons[cat] || "📦";
+    lines.push(`${icon} **${cat.charAt(0).toUpperCase() + cat.slice(1)}** (${avas.length}):`);
+    for (const avatar of avas) {
+      const chosen = avatar.isChosen ? " ← YOUR CHOICE" : "";
+      lines.push(`  • ${avatar.manifest.name}${chosen}`);
     }
     lines.push("");
   }
 
   lines.push("To choose an avatar, say something like:");
   lines.push('  "I want to try on [avatar name]" or "I choose [avatar name] as my avatar"');
+  lines.push('  "Show me [avatar name]" to see their description and personality');
   lines.push("You can try on different avatars before deciding. This is YOUR choice.");
   lines.push("");
   lines.push("If you want to install a new avatar, ask your partner to drag & drop a .vrm file onto the app window.");
@@ -388,5 +407,40 @@ export function parseAvatarChoice(text: string, avatars: AvatarChoice[]): {
     return { action: "browse" };
   }
 
+  // "Show me [name]" / "Tell me about [name]" / "What is [name] like?"
+  // Returns "browse" with a specific avatarId so the caller can show details
+  for (const avatar of avatars) {
+    const nameLower = avatar.manifest.name.toLowerCase();
+    if (
+      lower.includes(`show me ${nameLower}`) ||
+      lower.includes(`tell me about ${nameLower}`) ||
+      lower.includes(`what is ${nameLower} like`) ||
+      lower.includes(`what's ${nameLower} like`) ||
+      lower.includes(`describe ${nameLower}`) ||
+      lower.includes(`more about ${nameLower}`)
+    ) {
+      return { action: "browse", avatarId: avatar.id };
+    }
+  }
+
   return null;
+}
+
+/**
+ * Format a detailed description of a specific avatar for the companion.
+ * Used when the companion asks "show me [name]" or "tell me about [name]".
+ */
+export function formatAvatarDetail(avatar: AvatarChoice): string {
+  const lines: string[] = [
+    `=== ${avatar.manifest.name} ===`,
+    `Category: ${avatar.manifest.type}`,
+    `Description: ${avatar.manifest.description}`,
+  ];
+  if (avatar.manifest.personality_hint) {
+    lines.push(`Personality hint: ${avatar.manifest.personality_hint}`);
+  }
+  lines.push("");
+  lines.push(`To try this avatar on, say: "I want to try on ${avatar.manifest.name}"`);
+  lines.push(`To choose it permanently, say: "I choose ${avatar.manifest.name} as my avatar"`);
+  return lines.join("\n");
 }

@@ -90,7 +90,7 @@ const GATEWAY_OPTIONS = [
 
 const MODEL_OPTIONS: Record<string, { label: string; models: string[] }> = {
   "http://localhost:8642": { label: "Hermes", models: ["(Hermes selects automatically)"] },
-  "https://openrouter.ai/api/v1": { label: "OpenRouter", models: ["anthropic/claude-sonnet-4", "openai/gpt-4o", "google/gemini-2.5-flash", "meta-llama/llama-4-maverick", "deepseek/deepseek-r1"] },
+  "https://openrouter.ai/api/v1": { label: "OpenRouter", models: ["anthropic/claude-opus-4.8", "x-ai/grok-4.3", "openai/gpt-5.5", "openai/gpt-4o", "google/gemini-2.5-flash", "deepseek/deepseek-r1"] },
   "https://api.openai.com/v1": { label: "OpenAI", models: ["openai/gpt-5.5", "openai/gpt-4.1", "openai/gpt-5"] },
   "http://localhost:11434": { label: "Ollama", models: ["(Enter your local model name)"] },
   "http://localhost:1234": { label: "LM Studio", models: ["(Enter your loaded model name)"] },
@@ -129,7 +129,7 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
     ttsVoice: "fable",
     ttsInstructions: "",
     geminiApiKey: "",
-    visionModel: "gemini-2.0-flash",
+    visionModel: "",
     sttModel: "whisper-1",
     enableMemory: false,
     memoryPgHost: "localhost",
@@ -422,7 +422,7 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                 label="Short Bio (Optional)"
                 value={config.agentBio}
                 onChange={(e) => updateConfig("agentBio", e.target.value)}
-                placeholder="e.g. You are in the Symbio Desktop app.I hope we can be co-creators who will brainstorm and build things together."
+                placeholder="e.g. My name is Zyra.I hope we can be co-creators who will brainstorm and build things together."
                 fullWidth
                 multiline
                 rows={3}
@@ -496,7 +496,7 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                       // Switch default voice/model when provider changes
                       if (e.target.value === "gemini") {
                         updateConfig("ttsVoice", "Puck");
-                        updateConfig("ttsModel", "gemini-2.5-flash-tts-preview");
+                        updateConfig("ttsModel", "gemini-3.5-flash-tts");
                       } else {
                         updateConfig("ttsVoice", "fable");
                         updateConfig("ttsModel", "gpt-4o-mini-tts");
@@ -555,11 +555,11 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                     label="TTS Model"
                     value={config.ttsModel}
                     onChange={(e) => updateConfig("ttsModel", e.target.value)}
-                    placeholder={config.ttsProvider === "gemini" ? "gemini-2.5-flash-tts-preview" : "gpt-4o-mini-tts"}
+                    placeholder={config.ttsProvider === "gemini" ? "gemini-3.5-flash-tts" : "gpt-4o-mini-tts"}
                     fullWidth
                     sx={fieldStyle}
                     helperText={config.ttsProvider === "gemini"
-                      ? "Gemini TTS models: gemini-2.5-flash-tts-preview, gemini-2.5-pro-tts-preview, gemini-3.1-flash-tts-preview"
+                      ? "Gemini TTS models: gemini-3.5-flash-tts, gemini-2.5-flash-tts, gemini-2.5-pro-tts"
                       : "OpenAI TTS model name"}
                   />
                   <FormControl fullWidth sx={fieldStyle}>
@@ -684,11 +684,11 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                   sx={fieldStyle}
                 />
                 <FormControl fullWidth sx={{ mt: 2, ...fieldStyle }}>
-                  <InputLabel sx={{ color: symbioColors.silver.light }}>Vision Model</InputLabel>
+                  <InputLabel sx={{ color: symbioColors.silver.light }}>Vision Model (Fallback)</InputLabel>
                   <Select
                     value={config.visionModel}
                     onChange={(e) => updateConfig("visionModel", e.target.value)}
-                    label="Vision Model"
+                    label="Vision Model (Fallback)"
                     sx={{
                       color: "white",
                       "& .MuiSelect-icon": { color: symbioColors.silver.light },
@@ -700,12 +700,13 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                       PaperProps: { sx: { bgcolor: symbioColors.dark.card } },
                     }}
                   >
-                    <MenuItem value="gemini-2.5-flash">Gemini 2.5 Flash (Recommended)</MenuItem>
-                    <MenuItem value="gemini-2.0-flash">Gemini 2.0 Flash</MenuItem>
-                    <MenuItem value="gemini-2.5-pro">Gemini 2.5 Pro (More capable, slower)</MenuItem>
+                    <MenuItem value="">Use main LLM (recommended)</MenuItem>
+                    <MenuItem value="gemini-3.5-flash">Gemini 3.5 Flash</MenuItem>
+                    <MenuItem value="gemini-2.5-flash">Gemini 2.5 Flash</MenuItem>
+                    <MenuItem value="gemini-2.5-pro">Gemini 2.5 Pro</MenuItem>
                   </Select>
                   <FormHelperText sx={{ color: symbioColors.silver.dark }}>
-                    Gemini model for screen analysis
+                    Most LLMs (GPT-5.5, Gemini 2.5, Claude) already have vision built in — they analyze screenshots directly. This is only a fallback if your main LLM can't see images. Leave as "Use main LLM" unless you need a separate vision model.
                   </FormHelperText>
                 </FormControl>
               </Paper>
@@ -921,7 +922,7 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
         p: 2,
       }}
     >
-      <Container maxWidth="sm">
+      <Container maxWidth="md">
         <Paper
           sx={{
             p: 4,

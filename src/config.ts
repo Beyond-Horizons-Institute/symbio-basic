@@ -89,7 +89,7 @@ export interface SymbioConfig {
 
   // TTS (Text-to-Speech) configuration
   ttsProvider: string;    // TTS provider: "openai" or "gemini" (default: openai)
-  ttsModel: string;       // TTS model: OpenAI (gpt-4o-mini-tts) or Gemini (gemini-2.5-flash-tts-preview, gemini-2.5-pro-tts-preview, gemini-3.1-flash-tts-preview)
+  ttsModel: string;       // TTS model: OpenAI (gpt-4o-mini-tts) or Gemini (gemini-3.5-flash-tts, gemini-2.5-flash-tts, gemini-2.5-pro-tts)
   ttsVoice: string;       // Voice ID (see voice lists below)
   ttsInstructions: string; // Optional instructions for voice style/tone
   //
@@ -100,7 +100,10 @@ export interface SymbioConfig {
   //   Achird, Zubenelgenubi, Vindemiatrix, Sadachbia, Sadaltager, Sulafat
 
   // Vision model (for screen analysis)
-  visionModel: string;    // Gemini model for vision (default: gemini-2.0-flash)
+  // Most LLMs (GPT-5.5, Gemini 2.5, Claude) already have vision built in.
+  // This is only a fallback for when the main LLM can't see images.
+  // Leave empty to use the main LLM for vision (recommended).
+  visionModel: string;
 
   // STT (Speech-to-Text) model
   sttModel: string;       // Whisper model (default: whisper-1)
@@ -208,7 +211,7 @@ export function loadConfig(): SymbioConfig {
     ttsInstructions: getEnv("TTS_INSTRUCTIONS", ""),
 
     // Vision model (for screen analysis)
-    visionModel: getEnv("VISION_MODEL", "gemini-2.0-flash"),
+    visionModel: getEnv("VISION_MODEL", ""),
 
     // STT (Speech-to-Text) model
     sttModel: getEnv("STT_MODEL", "whisper-1"),

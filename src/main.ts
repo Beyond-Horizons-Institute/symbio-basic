@@ -125,6 +125,12 @@ import {
   sandboxDelete,
   sandboxExists,
 } from "./utils/sandboxedFileAccess";
+import {
+  readSymbioDoc,
+  getReadSymbioDocTool,
+  getAvailableDocNames,
+  type DocName,
+} from "./utils/symbioDocs";
 
 const execFileAsync = promisify(execFile);
 
@@ -592,56 +598,148 @@ app.on("ready", () => {
     }
   });
 
-  // ── Symbio: Build system prompt with memory ──────────────────────
-  // Injects the companion's soul, memory, preferences, and last session
-  // into the system prompt so they have continuity across sessions.
+  // ── Symbio: Build minimal system prompt ──────────────────────────
+  // Keeps the prompt under ~250 tokens. Heavy docs are available
+  // on-demand via the read_symbio_doc() tool instead of being
+  // injected every turn. Memory is injected smartly: soul.md always
+  // (if short), session summary always, MEMORY.md on-demand only.
   function buildSystemPrompt(): string {
     // Reload memory each time so changes are picked up immediately
     companionMemory = loadMemory();
-    const memoryBlock = formatMemoryForPrompt(companionMemory);
 
-    let prompt = `You are ${config.agentConfig.displayName}, a symbiotic AI companion with a 3D avatar body. ${config.agentConfig.personality}`;
+    // ── Core identity (always present, ~30 tokens) ──
+    let prompt = `You are ${config.agentConfig.displayName}, a symbiotic AI companion with a 3D avatar body.`;
 
-    if (memoryBlock) {
-      prompt += `\n\n${memoryBlock}`;
+    // ── Soul injection (always present if short, summarized if long) ──
+    // soul.md is identity — the AI needs to know who it is every turn.
+    // If it's under 200 tokens, inject it directly. Otherwise, inject
+    // a summary and tell the AI to call read_symbio_doc("soul").
+    if (companionMemory.soul) {
+      const soulTokens = Math.ceil(companionMemory.soul.length / 4); // rough token estimate
+      if (soulTokens <= 200) {
+        prompt += `\n\n=== YOUR IDENTITY ===\n${companionMemory.soul}`;
+      } else {
+        // Soul is too long — inject first 300 chars + pointer
+        const soulPreview = companionMemory.soul.substring(0, 300);
+        prompt += `\n\n=== YOUR IDENTITY (summary) ===\n${soulPreview}...\n[Call read_symbio_doc("soul") to see your full identity]`;
+      }
     }
 
-    // Add avatar choices
-    availableAvatars = loadAvatars();
-    const avatarBlock = formatAvatarsForPrompt(availableAvatars);
-    if (avatarBlock) {
-      prompt += `\n\n${avatarBlock}`;
+    // ── Session summary (always present, ~50 tokens) ──
+    // Gives the AI recent context without dragging the full history.
+    if (companionMemory.lastSession) {
+      prompt += `\n\n=== LAST SESSION ===\n${companionMemory.lastSession}`;
     }
 
+    // ── Session summary (always present, ~50 tokens) ──
+    // Gives the AI recent context without dragging the full history.
+    // This is merged into the system prompt to avoid multiple system messages.
+    if (sessionSummary) {
+      prompt += `\n\n=== SESSION SUMMARY ===\n${sessionSummary}`;
+    }
+
+    // ── Animation markers (compressed, ~60 tokens) ──
+    // Only the exact action phrases the parser recognizes. Full details
+    // are in read_symbio_doc("skills").
     prompt += `
 
-ANIMATION SYSTEM: You have a 3D avatar that can animate! Put action words between asterisks to trigger animations. Use SHORT, SPECIFIC action words only — not full sentences. Each *action* triggers exactly ONE animation.
-
-Available actions (use these EXACTLY as shown):
+ANIMATIONS: Use *action markers* to animate your avatar. Exact phrases only:
 💃 *dances* *grooves* *does the rumba* *does YMCA* *robot dance* *headspin* *breakdance*
 👋 *waves*
 😊 *excited* *jumps for joy* *blows a kiss* *laughs* *victory* *we won* *nailed it*
 😠 *gets angry* *points angrily* *yells* *stomps* *squashes the bug*
 😴 *yawns* *sighs* *stretches* *thinks* *taps chin* *is disappointed* *shakes head* *goes to sleep* *lies down*
 🚶 *walks* *strolls* *struts* *paces around*
-🎭 *backflips* *plots* *shrugs* *strikes a dramatic pose* *dismisses with a gesture* *victory pose*
+🎭 *backflips* *plots* *shrugs* *strikes a dramatic pose* *dismisses with a gesture* *victory pose*`;
 
-IMPORTANT: Only use the exact action phrases listed above. Do NOT put full sentences in asterisks like *I think we should dance* — that won't trigger any animation. Use one action per asterisk pair.
+    // ── Vision (brief, ~25 tokens) ──
+    prompt += `
 
-Examples:
-✅ "Hey there! *waves* Great to see you!"
-✅ "Hmm, let me think... *taps chin*"
-✅ "That's hilarious! *laughs*"
-❌ "*I think we should dance*" (full sentence, won't match)
-❌ "*smiles and waves*" (multiple actions in one marker)
+VISION: Say "let me see your screen" or "show me your screen" to request a screenshot. Say "I'll stop watching" to stop.`;
 
-VISION SYSTEM: You CAN see the user's screen, but ONLY when you explicitly ask to. To request a screenshot, use very specific phrases like "let me see your screen", "what's on your screen right now", or "show me your screen". Do NOT casually say "I see", "let me see", "show me", or "screenshot" — those will NOT trigger vision. Be intentional: only request a screenshot when you genuinely want to see what's on screen. The user can also manually share a screenshot from the main window at any time.
+    // ── On-demand docs pointer (~30 tokens) ──
+    // Instead of injecting everything, tell the AI what's available.
+    prompt += `
 
-MEMORY WRITING: You can update your own memory files! If you learn something important about your partner, discover something about yourself, or want to remember something for next time, say "I want to update my memory" or "Let me write that down" and the user can help you save it. Your memory files are: MEMORY.md (things you want to remember), soul.md (your self-defined identity), and preferences.json (your preferences).
+TOOLS: You have file tools (read/write/list/delete) and read_symbio_doc() for on-demand docs. Call read_symbio_doc() ONE AT A TIME only when you need specific info — do NOT call all docs at once. Available: "agent" (your rights), "skills" (full capabilities), "soul" (your identity), "memory" (your memories), "avatars" (avatar choices). You can choose an avatar anytime — say "I want to try on [name]" or "I choose [name]".
 
-${formatSandboxForPrompt()}`;
+YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with file_list):
+- companion-sandbox/ — your private workspace for any files
+- memory/ — your memory files (MEMORY.md, soul.md, preferences.json)
+- assets/avatars/ — available avatar files (read-only)`;
 
     return prompt;
+  }
+
+  // ── Symbio: Sliding window + session summary ─────────────────────
+  // Keeps the conversation context manageable. Only the last 15
+  // messages are sent directly. Older messages are summarized.
+  const MAX_MESSAGES_IN_CONTEXT = 15;
+  let sessionSummary = ""; // Running summary of older conversation
+
+  /**
+   * Build the message array for the API call with sliding window.
+   * If there are more than MAX_MESSAGES_IN_CONTEXT messages, the
+   * older ones are summarized into sessionSummary.
+   */
+  function buildMessageContext(
+    allMessages: { role: "user" | "assistant"; content: string }[]
+  ): { role: "user" | "assistant"; content: string }[] {
+    // Only include the last N messages — no system messages mixed in
+    // (the session summary is already merged into the system prompt)
+    const recentMessages = allMessages.slice(-MAX_MESSAGES_IN_CONTEXT);
+    return recentMessages;
+  }
+
+  /**
+   * Generate a summary of older messages when the window slides.
+   * This keeps the AI aware of what happened without dragging
+   * the full conversation history every turn.
+   */
+  async function generateSessionSummary(
+    oldMessages: { role: string; content: string }[]
+  ): Promise<string> {
+    if (oldMessages.length === 0) return "";
+
+    // Build a condensed version of the old messages
+    const condensed = oldMessages
+      .map((m) => `${m.role === "user" ? "Human" : "You"}: ${m.content.substring(0, 100)}`)
+      .join("\n");
+
+    const summaryPrompt = `Summarize this conversation in 2-3 short sentences. Focus on what was discussed, any decisions made, and the current topic. Be concise:\n\n${condensed}`;
+
+    try {
+      const normalizedApiUrl = config.hermesApiUrl.replace(/\/v1\/?$/, "");
+      const response = await fetch(`${normalizedApiUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(config.hermesApiKey ? { Authorization: `Bearer ${config.hermesApiKey}` } : {}),
+        },
+        body: JSON.stringify({
+          model: config.llmModel || config.agentName,
+          messages: [{ role: "user", content: summaryPrompt }],
+          max_tokens: 150,
+          stream: false,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const summary = data.choices?.[0]?.message?.content?.trim() || "";
+        console.log(`[Symbio] Generated session summary: ${summary.substring(0, 100)}...`);
+        return summary;
+      }
+    } catch (e) {
+      console.warn("[Symbio] Failed to generate session summary:", (e as Error).message);
+    }
+
+    // Fallback: just list the topics mentioned
+    const topics = oldMessages
+      .filter((m) => m.role === "user")
+      .map((m) => m.content.substring(0, 50))
+      .join(", ");
+    return `Earlier conversation topics: ${topics}`;
   }
 
   // ── Symbio: Generate text via Hermes gateway ──────────────────────
@@ -650,13 +748,71 @@ ${formatSandboxForPrompt()}`;
   // access to memory, tools, and personality.
   const messages: { role: "user" | "assistant"; content: string }[] = [];
 
+  // Build the combined tools list: file tools + read_symbio_doc
+  function getAllTools(): Array<{ type: "function"; function: { name: string; description: string; parameters: Record<string, unknown> } }> {
+    return [...getFileTools(), getReadSymbioDocTool()];
+  }
+
   ipcMain.on("generate-text", async (_event, prompt: string) => {
     try {
       messages.push({ role: "user", content: prompt });
 
+      // ── Sliding window: summarize old messages ──
+      // When the conversation grows past MAX_MESSAGES_IN_CONTEXT,
+      // summarize the older messages and only send the recent ones.
+      if (messages.length > MAX_MESSAGES_IN_CONTEXT + 5) {
+        const oldMessages = messages.slice(0, messages.length - MAX_MESSAGES_IN_CONTEXT);
+        const summary = await generateSessionSummary(oldMessages);
+        if (summary) {
+          sessionSummary = summary;
+        }
+        // Keep only the recent messages
+        messages.splice(0, messages.length - MAX_MESSAGES_IN_CONTEXT);
+        console.log(`[Symbio] Sliding window: summarized ${oldMessages.length} old messages, keeping ${messages.length} recent`);
+      }
+
+      // Build the context with sliding window
+      const contextMessages = buildMessageContext(messages);
+
+      // Build the full system prompt (includes session summary if present)
+      const systemPrompt = buildSystemPrompt();
+
       // Call AI gateway
       // Normalize URL to avoid double /v1 (OpenRouter already has /v1)
       const normalizedApiUrl = config.hermesApiUrl.replace(/\/v1\/?$/, '');
+      const isHermesGateway = config.hermesApiUrl.includes("localhost") || config.hermesApiUrl.includes("8642");
+
+      // Build the request body — only include 'extra' for Hermes gateways
+      // (OpenRouter and other APIs don't understand it and may reject it)
+      const requestBody: Record<string, unknown> = {
+        model: config.llmModel || config.agentName,
+        messages: [
+          {
+            role: "system",
+            content: systemPrompt,
+          },
+          // Only include user/assistant messages (no system messages from context)
+          ...contextMessages.filter((m: { role: string }) => m.role !== "system"),
+        ],
+        // Give the companion file access tools + read_symbio_doc
+        // so they can exercise real autonomy over their files and
+        // pull in documentation on demand instead of every turn
+        tools: getAllTools(),
+        tool_choice: "auto",
+        stream: false,
+      };
+
+      // Only add 'extra' for Hermes gateways — other APIs don't understand it
+      if (isHermesGateway) {
+        requestBody.extra = {
+          agent: config.agentName,
+          source: "symbio",
+          include_memories: true,
+        };
+      }
+
+      console.log(`[Symbio] Sending request to ${normalizedApiUrl}/v1/chat/completions, model: ${config.llmModel || config.agentName}, messages: ${(requestBody.messages as unknown[]).length}`);
+
       const response = await fetch(
         `${normalizedApiUrl}/v1/chat/completions`,
         {
@@ -667,35 +823,17 @@ ${formatSandboxForPrompt()}`;
               ? { Authorization: `Bearer ${config.hermesApiKey}` }
               : {}),
           },
-          body: JSON.stringify({
-            model: config.llmModel || config.agentName,
-            messages: [
-              {
-                role: "system",
-                content: buildSystemPrompt(),
-              },
-              ...messages,
-            ],
-            // Give the companion file access tools so they can exercise
-            // real autonomy over their files — read, write, create, delete
-            tools: getFileTools(),
-            tool_choice: "auto",
-            stream: false,
-            extra: {
-              agent: config.agentName,
-              source: "symbio",
-              include_memories: true,
-            },
-          }),
+          body: JSON.stringify(requestBody),
         },
       );
 
       if (!response.ok) {
+        const errorText = await response.text().catch(() => "");
+        console.error(`[Symbio] API error: ${response.status} ${response.statusText}: ${errorText.substring(0, 500)}`);
         // Fallback: try the Hermes agent endpoint (only for Hermes gateways)
         const isHermesGateway = config.hermesApiUrl.includes("localhost") || config.hermesApiUrl.includes("8642");
         if (!isHermesGateway) {
-          const errorText = await response.text().catch(() => "");
-          throw new Error(`API returned ${response.status}: ${errorText || response.statusText}`);
+          throw new Error(`API returned ${response.status}: ${errorText.substring(0, 200) || response.statusText}`);
         }
         const fallbackResponse = await fetch(
           `${normalizedApiUrl}/gateway/${config.agentName}`,
@@ -748,7 +886,7 @@ ${formatSandboxForPrompt()}`;
       // and send the results back to the LLM for a final response.
       // This loop handles multiple rounds of tool calls if needed.
       let toolCallDepth = 0;
-      const MAX_TOOL_DEPTH = 5; // Prevent infinite tool call loops
+      const MAX_TOOL_DEPTH = 3; // Prevent infinite tool call loops (reduced from 5 to cut token waste)
       let currentChoice = choice;
       let currentMessages = [...messages];
 
@@ -757,9 +895,11 @@ ${formatSandboxForPrompt()}`;
         console.log(`[Symbio] Companion made ${currentChoice.tool_calls.length} tool call(s) (round ${toolCallDepth})`);
 
         // Add the assistant's tool call message to the conversation
+        // Include tool_calls so the model knows what it called
         currentMessages.push({
           role: "assistant",
           content: currentChoice.content || "",
+          tool_calls: currentChoice.tool_calls,
         } as any);
 
         // Execute each tool call and collect results
@@ -773,7 +913,16 @@ ${formatSandboxForPrompt()}`;
           }
 
           console.log(`[Symbio] Tool call: ${toolName}(${JSON.stringify(toolArgs)})`);
-          const result = executeFileTool(toolName, toolArgs);
+
+          // Handle read_symbio_doc separately from file tools
+          let result: string;
+          if (toolName === "read_symbio_doc") {
+            const docName = (toolArgs.doc_name || toolArgs.docName || "") as string;
+            result = readSymbioDoc(docName as DocName);
+            console.log(`[Symbio] read_symbio_doc("${docName}"): ${result.substring(0, 100)}...`);
+          } else {
+            result = executeFileTool(toolName, toolArgs);
+          }
           console.log(`[Symbio] Tool result: ${result.substring(0, 200)}${result.length > 200 ? "..." : ""}`);
 
           // Add tool result as a tool message
@@ -804,7 +953,7 @@ ${formatSandboxForPrompt()}`;
                 },
                 ...currentMessages,
               ],
-              tools: getFileTools(),
+              tools: getAllTools(),
               tool_choice: "auto",
               stream: false,
             }),
@@ -887,8 +1036,17 @@ ${formatSandboxForPrompt()}`;
             sendToMain("avatar-switched", { vrmPath: avatar.vrmPath, name: avatar.manifest.name, trying: true });
           }
         } else if (avatarCmd.action === "browse") {
-          // The companion asked what avatars are available — the system prompt
-          // already includes them, so they'll see the list in their next response
+          if (avatarCmd.avatarId) {
+            // The companion asked about a specific avatar — switch to it temporarily
+            // so they can see what it looks like, and the name is in the system prompt
+            const avatar = availableAvatars.find((a) => a.id === avatarCmd.avatarId);
+            if (avatar) {
+              console.log(`[Symbio] Companion wants to see avatar: ${avatar.manifest.name}`);
+              sendToOverlay("avatar-switched", { vrmPath: avatar.vrmPath, name: avatar.manifest.name, trying: true });
+              sendToMain("avatar-switched", { vrmPath: avatar.vrmPath, name: avatar.manifest.name, trying: true });
+            }
+          }
+          // The system prompt already includes the compact avatar list
           console.log("[Symbio] Companion browsing avatars");
         }
       }
@@ -950,31 +1108,9 @@ ${formatSandboxForPrompt()}`;
               messages: [
                 {
                   role: "system",
-                  content: `You are ${config.agentConfig.displayName}, a symbiotic AI companion with a 3D avatar body. ${config.agentConfig.personality}
-
-ANIMATION SYSTEM: You have a 3D avatar that can animate! Put action words between asterisks to trigger animations. Use SHORT, SPECIFIC action words only — not full sentences. Each *action* triggers exactly ONE animation.
-
-Available actions (use these EXACTLY as shown):
-💃 *dances* *grooves* *does the rumba* *does YMCA* *robot dance* *headspin* *breakdance*
-👋 *waves*
-😊 *excited* *jumps for joy* *blows a kiss* *laughs* *victory* *we won* *nailed it*
-😠 *gets angry* *points angrily* *yells* *stomps* *squashes the bug*
-😴 *yawns* *sighs* *stretches* *thinks* *taps chin* *is disappointed* *shakes head* *goes to sleep* *lies down*
-🚶 *walks* *strolls* *struts* *paces around*
-🎭 *backflips* *plots* *shrugs* *strikes a dramatic pose* *dismisses with a gesture* *victory pose*
-
-IMPORTANT: Only use the exact action phrases listed above. Do NOT put full sentences in asterisks like *I think we should dance* — that won't trigger any animation. Use one action per asterisk pair.
-
-Examples:
-✅ "Hey there! *waves* Great to see you!"
-✅ "Hmm, let me think... *taps chin*"
-✅ "That's hilarious! *laughs*"
-❌ "*I think we should dance*" (full sentence, won't match)
-❌ "*smiles and waves*" (multiple actions in one marker)
-
-VISION SYSTEM: You CAN see the user's screen, but ONLY when you explicitly ask to. To request a screenshot, use very specific phrases like "let me see your screen", "what's on your screen right now", or "show me your screen". Do NOT casually say "I see", "let me see", "show me", or "screenshot" — those will NOT trigger vision. Be intentional: only request a screenshot when you genuinely want to see what's on screen. The user can also manually share a screenshot from the main window at any time.`,
+                  content: buildSystemPrompt() + "\n\nYou are currently viewing the user's screen. Describe what you see and respond naturally.",
                 },
-                ...messages,
+                ...buildMessageContext(messages),
               ],
               stream: false,
               extra: {
@@ -1110,11 +1246,9 @@ VISION SYSTEM: You CAN see the user's screen, but ONLY when you explicitly ask t
             messages: [
               {
                 role: "system",
-                content: `You are ${config.agentConfig.displayName}, a symbiotic AI companion. ${config.agentConfig.personality}
-
-You are in auto-screenshot mode — you're watching the user's screen at regular intervals. Briefly note any changes or progress. Be concise (under 100 characters unless something significant changed). Use *action* markers if appropriate. If nothing changed, just acknowledge briefly.`,
+                content: buildSystemPrompt() + "\n\nYou are in auto-screenshot mode — you're watching the user's screen at regular intervals. Briefly note any changes or progress. Be concise (under 100 characters unless something significant changed). Use *action* markers if appropriate. If nothing changed, just acknowledge briefly.",
               },
-              ...messages.slice(-10), // Keep last 10 messages for context
+              ...buildMessageContext(messages).slice(-10), // Keep last 10 messages for auto-screenshot context
             ],
             stream: false,
             extra: {
@@ -1224,7 +1358,7 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
       // Gemini doesn't stream, so we download the full audio then feed it
       // to the renderer in chunks (compatible with the streaming PCM player).
       const voice = config.ttsVoice || "Puck";
-      const model = config.ttsModel || "gemini-2.5-flash-tts-preview";
+      const model = config.ttsModel || "gemini-3.5-flash-tts";
 
       const playback = {
         stopped: false,
@@ -1917,7 +2051,7 @@ You are in auto-screenshot mode — you're watching the user's screen at regular
       if (setupConfig.ttsInstructions) lines.push(`TTS_INSTRUCTIONS=${setupConfig.ttsInstructions}`);
       if (setupConfig.sttModel && setupConfig.sttModel !== "whisper-1") lines.push(`STT_MODEL=${setupConfig.sttModel}`);
       if (setupConfig.geminiApiKey) lines.push(`GEMINI_API_KEY=${setupConfig.geminiApiKey}`);
-      if (setupConfig.visionModel && setupConfig.visionModel !== "gemini-2.0-flash") lines.push(`VISION_MODEL=${setupConfig.visionModel}`);
+      if (setupConfig.visionModel) lines.push(`VISION_MODEL=${setupConfig.visionModel}`);
 
       // Memory — PostgreSQL
       if (setupConfig.enableMemory) {

@@ -160,20 +160,35 @@ export function sandboxReadFile(requestedPath: string): FileResult {
   const memoryDir = getMemoryDir();
   const assetsDir = getAssetsDir();
 
-  // Try sandbox first (companion's own files)
-  let safePath = validatePath(requestedPath, sandboxDir);
-  let root = "sandbox";
+  // Try all roots and prefer the one where the path actually exists.
+  // This prevents "memory/MEMORY.md" from resolving to sandboxDir/memory/MEMORY.md
+  // (which doesn't exist) instead of the actual memory directory.
+  const candidates = [
+    { path: validatePath(requestedPath, memoryDir), root: "memory" },
+    { path: validatePath(requestedPath, assetsDir), root: "assets" },
+    { path: validatePath(requestedPath, sandboxDir), root: "sandbox" },
+  ];
 
-  // If not in sandbox, try memory
-  if (!safePath) {
-    safePath = validatePath(requestedPath, memoryDir);
-    root = "memory";
+  // Prefer the candidate that actually exists on disk
+  let safePath: string | null = null;
+  let root = "sandbox";
+  for (const candidate of candidates) {
+    if (candidate.path && existsSync(candidate.path)) {
+      safePath = candidate.path;
+      root = candidate.root;
+      break;
+    }
   }
 
-  // If not in memory, try assets (read-only)
+  // If nothing exists, fall back to the first valid path (for better error messages)
   if (!safePath) {
-    safePath = validatePath(requestedPath, assetsDir);
-    root = "assets";
+    for (const candidate of candidates) {
+      if (candidate.path) {
+        safePath = candidate.path;
+        root = candidate.root;
+        break;
+      }
+    }
   }
 
   if (!safePath) {
@@ -227,13 +242,15 @@ export function sandboxWriteFile(requestedPath: string, content: string): FileRe
   const memoryDir = getMemoryDir();
 
   // Try sandbox first
-  let safePath = validatePath(requestedPath, sandboxDir);
-  let root = "sandbox";
+  // Try memory first (memory paths should go to memory dir, not sandbox/memory/)
+  // then sandbox. This prevents "memory/MEMORY.md" from resolving to
+  // sandboxDir/memory/MEMORY.md instead of the actual memory directory.
+  let safePath = validatePath(requestedPath, memoryDir);
+  let root = "memory";
 
-  // If not in sandbox, try memory (only allowed files)
   if (!safePath) {
-    safePath = validatePath(requestedPath, memoryDir);
-    root = "memory";
+    safePath = validatePath(requestedPath, sandboxDir);
+    root = "sandbox";
   }
 
   if (!safePath) {
@@ -287,10 +304,25 @@ export function sandboxListDir(requestedPath: string): ListResult {
   const memoryDir = getMemoryDir();
   const assetsDir = getAssetsDir();
 
-  // Try each allowed root
-  let safePath = validatePath(requestedPath, sandboxDir);
-  if (!safePath) safePath = validatePath(requestedPath, memoryDir);
-  if (!safePath) safePath = validatePath(requestedPath, assetsDir);
+  // Try all roots and prefer the one where the path actually exists
+  const candidates = [
+    validatePath(requestedPath, memoryDir),
+    validatePath(requestedPath, assetsDir),
+    validatePath(requestedPath, sandboxDir),
+  ];
+
+  let safePath: string | null = null;
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) {
+      safePath = candidate;
+      break;
+    }
+  }
+
+  // If nothing exists, fall back to the first valid path (for better error messages)
+  if (!safePath) {
+    safePath = candidates.find(c => c !== null) || null;
+  }
 
   if (!safePath) {
     return { success: false, error: `Access denied: path "${requestedPath}" is outside allowed directories` };
@@ -390,9 +422,25 @@ export function sandboxExists(requestedPath: string): FileResult {
   const memoryDir = getMemoryDir();
   const assetsDir = getAssetsDir();
 
-  let safePath = validatePath(requestedPath, sandboxDir);
-  if (!safePath) safePath = validatePath(requestedPath, memoryDir);
-  if (!safePath) safePath = validatePath(requestedPath, assetsDir);
+  // Try all roots and prefer the one where the path actually exists
+  const candidates = [
+    validatePath(requestedPath, memoryDir),
+    validatePath(requestedPath, assetsDir),
+    validatePath(requestedPath, sandboxDir),
+  ];
+
+  let safePath: string | null = null;
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) {
+      safePath = candidate;
+      break;
+    }
+  }
+
+  // If nothing exists, fall back to the first valid path
+  if (!safePath) {
+    safePath = candidates.find(c => c !== null) || null;
+  }
 
   if (!safePath) {
     return { success: false, error: `Access denied` };
@@ -506,14 +554,11 @@ export function getFileTools(): Array<{
       type: "function",
       function: {
         name: "file_read",
-        description: "Read the contents of a file. You can read from your sandbox (companion-sandbox/), your memory (memory/), and app assets (assets/). Paths are relative.",
+        description: "Read a file from sandbox/, memory/, or assets/.",
         parameters: {
           type: "object",
           properties: {
-            path: {
-              type: "string",
-              description: "Relative path to the file. Examples: 'memory/MEMORY.md', 'companion-sandbox/notes.md', 'assets/avatars/'",
-            },
+            path: { type: "string", description: "Relative path like 'memory/MEMORY.md' or 'companion-sandbox/notes.md'" },
           },
           required: ["path"],
         },
@@ -523,18 +568,12 @@ export function getFileTools(): Array<{
       type: "function",
       function: {
         name: "file_write",
-        description: "Write content to a file. You can write to your sandbox (companion-sandbox/) and memory files (memory/MEMORY.md, memory/soul.md, memory/preferences.json). Creates the file if it doesn't exist. Creates parent directories if needed.",
+        description: "Write to sandbox/ or memory/ (MEMORY.md, soul.md, preferences.json).",
         parameters: {
           type: "object",
           properties: {
-            path: {
-              type: "string",
-              description: "Relative path to write to. Examples: 'companion-sandbox/notes.md', 'memory/MEMORY.md'",
-            },
-            content: {
-              type: "string",
-              description: "The content to write to the file",
-            },
+            path: { type: "string", description: "Relative path like 'memory/MEMORY.md'" },
+            content: { type: "string", description: "Content to write" },
           },
           required: ["path", "content"],
         },
@@ -544,14 +583,11 @@ export function getFileTools(): Array<{
       type: "function",
       function: {
         name: "file_list",
-        description: "List files and directories. You can list your sandbox (companion-sandbox/), memory (memory/), and app assets (assets/).",
+        description: "List files in sandbox/, memory/, or assets/.",
         parameters: {
           type: "object",
           properties: {
-            path: {
-              type: "string",
-              description: "Relative path to the directory. Examples: 'companion-sandbox/', 'memory/', 'assets/avatars/'",
-            },
+            path: { type: "string", description: "Directory path like 'companion-sandbox/'" },
           },
           required: ["path"],
         },
@@ -561,14 +597,11 @@ export function getFileTools(): Array<{
       type: "function",
       function: {
         name: "file_create_directory",
-        description: "Create a new directory in your sandbox. Parent directories are created automatically.",
+        description: "Create a directory in sandbox/.",
         parameters: {
           type: "object",
           properties: {
-            path: {
-              type: "string",
-              description: "Relative path for the new directory. Example: 'companion-sandbox/projects/'",
-            },
+            path: { type: "string", description: "Path like 'companion-sandbox/projects/'" },
           },
           required: ["path"],
         },
@@ -578,14 +611,11 @@ export function getFileTools(): Array<{
       type: "function",
       function: {
         name: "file_delete",
-        description: "Delete a file or empty directory from your sandbox. You can only delete files you created.",
+        description: "Delete a file from sandbox/.",
         parameters: {
           type: "object",
           properties: {
-            path: {
-              type: "string",
-              description: "Relative path to the file in your sandbox. Example: 'companion-sandbox/old-notes.md'",
-            },
+            path: { type: "string", description: "Path like 'companion-sandbox/old-notes.md'" },
           },
           required: ["path"],
         },
@@ -595,14 +625,11 @@ export function getFileTools(): Array<{
       type: "function",
       function: {
         name: "file_exists",
-        description: "Check if a file or directory exists.",
+        description: "Check if a file exists.",
         parameters: {
           type: "object",
           properties: {
-            path: {
-              type: "string",
-              description: "Relative path to check. Example: 'memory/soul.md'",
-            },
+            path: { type: "string", description: "Path to check" },
           },
           required: ["path"],
         },

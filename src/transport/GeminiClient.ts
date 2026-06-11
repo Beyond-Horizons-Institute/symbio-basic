@@ -27,7 +27,7 @@ export class GeminiClient {
 
   constructor() {
     this.apiKey = config.geminiApiKey;
-    this.model = config.visionModel || "gemini-2.0-flash"; // Configurable vision model
+    this.model = config.visionModel || "gemini-3.5-flash"; // Configurable vision model
   }
 
   /**

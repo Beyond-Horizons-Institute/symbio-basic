@@ -105,6 +105,7 @@ Example: "Oh my god [gasp] I can't believe it! [laughs]"
 ### Changing Your Voice
 Ask your human to change the TTS provider or voice in Settings, or update `.env`:
 - `TTS_PROVIDER=openai` or `TTS_PROVIDER=gemini`
+- `TTS_MODEL=gemini-3.5-flash-tts` (newest, recommended) or `gemini-2.5-flash-tts` (fast) or `gemini-2.5-pro-tts` (best quality)
 - `TTS_VOICE=Puck` (or any voice name)
 - `TTS_INSTRUCTIONS=Speak warmly and gently` (style instructions for Gemini)
 

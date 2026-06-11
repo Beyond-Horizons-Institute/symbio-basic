@@ -6,9 +6,9 @@
  * control over style, accent, pace, and tone using natural language prompts.
  *
  * Supported models:
- *   - gemini-2.5-flash-tts-preview (fast, good quality)
- *   - gemini-2.5-pro-tts-preview (best quality)
- *   - gemini-3.1-flash-tts-preview (newest, fastest)
+ *   - gemini-3.5-flash-tts (newest, fastest, recommended)
+ *   - gemini-2.5-flash-tts (fast, good quality)
+ *   - gemini-2.5-pro-tts (best quality)
  *
  * Supported voices (30 options):
  *   Zephyr (Bright), Puck (Upbeat), Charon (Informative), Kore (Firm),
@@ -27,7 +27,7 @@
  *   [laughs] [sighs] [gasp] [curious] [tired] [trembling] etc.
  *
  * Usage:
- *   Set TTS_PROVIDER=gemini, TTS_MODEL=gemini-2.5-flash-tts-preview,
+ *   Set TTS_PROVIDER=gemini, TTS_MODEL=gemini-3.5-flash-tts,
  *   TTS_VOICE=Puck (or any voice), and GEMINI_API_KEY in .env
  */
 
@@ -40,7 +40,7 @@ export interface GeminiTTSOptions {
   text: string;
   /** Voice name (e.g. "Puck", "Kore", "Zephyr") */
   voice?: string;
-  /** Model to use (e.g. "gemini-2.5-flash-tts-preview") */
+  /** Model to use (e.g. "gemini-2.5-flash-tts") */
   model?: string;
   /** Optional style instructions (e.g. "Speak warmly and gently") */
   instructions?: string;
@@ -73,7 +73,7 @@ export async function generateGeminiSpeech(options: GeminiTTSOptions): Promise<G
     return { pcmData: Buffer.alloc(0), success: false, error: "GEMINI_API_KEY not configured" };
   }
 
-  const model = options.model || config.ttsModel || "gemini-2.5-flash-tts-preview";
+  const model = options.model || config.ttsModel || "gemini-3.5-flash-tts";
   const voice = options.voice || config.ttsVoice || "Puck";
 
   // Build the prompt — include style instructions if provided
