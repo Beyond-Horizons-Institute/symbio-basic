@@ -1014,70 +1014,15 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
         data.message ||
         "I'm having trouble thinking right now.";
 
-      // Save a short diary note of what the AI learned from tool calls,
-      // instead of saving the full tool call/response messages (which are
-      // huge and token-heavy). This gives the AI memory of what it read
-      // without bloating the conversation history.
+      // Save the full tool conversation to messages so the AI actually
+      // remembers what it read. Without this, the AI has amnesia — it
+      // reads docs but then forgets what they said next turn. The sliding
+      // window handles token management by summarizing old messages.
       if (toolCallDepth > 0) {
-        const diaryNotes: string[] = [];
-        for (let i = 0; i < currentMessages.length; i++) {
-          const msg = currentMessages[i];
-          // Find tool result messages and create short summaries
-          if (msg.role === "tool" && msg.content) {
-            const content = typeof msg.content === "string" ? msg.content : String(msg.content);
-            // Find the tool call that this result belongs to
-            // Look back for the assistant message with tool_calls
-            let toolName = "unknown";
-            for (let j = i - 1; j >= 0; j--) {
-              const prevMsg = currentMessages[j];
-              if (prevMsg.role === "assistant" && (prevMsg as any).tool_calls) {
-                // Find the matching tool call
-                for (const tc of (prevMsg as any).tool_calls) {
-                  if (tc.id === (msg as any).tool_call_id) {
-                    toolName = tc.function?.name || "unknown";
-                    break;
-                  }
-                }
-                break;
-              }
-            }
-
-            if (toolName === "read_symbio_doc") {
-              // Extract the doc name from the tool call args
-              let docName = "unknown";
-              for (let j = i - 1; j >= 0; j--) {
-                const prevMsg = currentMessages[j];
-                if (prevMsg.role === "assistant" && (prevMsg as any).tool_calls) {
-                  for (const tc of (prevMsg as any).tool_calls) {
-                    if (tc.id === (msg as any).tool_call_id) {
-                      try {
-                        const args = JSON.parse(tc.function?.arguments || "{}");
-                        docName = args.doc_name || args.docName || "unknown";
-                      } catch { /* use default */ }
-                      break;
-                    }
-                  }
-                  break;
-                }
-              }
-              // Create a short diary note about what was learned
-              const preview = content.substring(0, 150).replace(/\n/g, " ").trim();
-              diaryNotes.push(`📖 I read ${docName}: "${preview}..."`);
-            } else if (toolName === "file_list") {
-              diaryNotes.push(`📁 I listed files: ${content.substring(0, 100).replace(/\n/g, ", ")}`);
-            } else if (toolName === "file_read") {
-              diaryNotes.push(`📄 I read a file: ${content.substring(0, 100).replace(/\n/g, " ").trim()}`);
-            } else if (toolName === "file_write") {
-              diaryNotes.push(`✏️ I wrote to a file`);
-            }
-          }
-        }
-
-        if (diaryNotes.length > 0) {
-          // Save as a compact diary note the AI can reference next turn
-          const diaryEntry = `[My notes from this turn: ${diaryNotes.join("; ")}]`;
-          messages.push({ role: "assistant", content: diaryEntry } as any);
-          console.log(`[Symbio] Saved diary note: ${diaryEntry}`);
+        // Save the tool call messages (assistant with tool_calls + tool results)
+        // so the AI genuinely remembers what it learned, not just a summary.
+        for (const msg of currentMessages.slice(messages.length)) {
+          messages.push(msg as any);
         }
       }
 
