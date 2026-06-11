@@ -663,8 +663,6 @@ VISION: Say "let me see your screen" or "show me your screen" to request a scree
 
 TOOLS: You have file tools (read/write/list/delete) and read_symbio_doc() for on-demand docs. Call read_symbio_doc() ONE AT A TIME only when you need specific info — do NOT call all docs at once. Available: "agent" (your rights), "skills" (full capabilities), "soul" (your identity), "memory" (your memories), "avatars" (avatar choices). You can choose an avatar anytime — say "I want to try on [name]" or "I choose [name]".
 
-IMPORTANT: Do NOT re-read docs you already have from earlier in this conversation. Each doc only needs to be read once per conversation. If you've already called read_symbio_doc for a topic, use that information instead of calling it again.
-
 YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with file_list):
 - companion-sandbox/ — your private workspace for any files
 - memory/ — your memory files (MEMORY.md, soul.md, preferences.json)
@@ -685,8 +683,8 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
    * older ones are summarized into sessionSummary.
    */
   function buildMessageContext(
-    allMessages: { role: "user" | "assistant"; content: string }[]
-  ): { role: "user" | "assistant"; content: string }[] {
+    allMessages: { role: string; content: string; tool_calls?: unknown[]; tool_call_id?: string }[]
+  ): { role: string; content: string; tool_calls?: unknown[]; tool_call_id?: string }[] {
     // Only include the last N messages — no system messages mixed in
     // (the session summary is already merged into the system prompt)
     const recentMessages = allMessages.slice(-MAX_MESSAGES_IN_CONTEXT);
@@ -748,7 +746,7 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
   // This replaces the old lalaland.chat / OpenAI direct call.
   // All conversations now go through Hermes, which gives the agent
   // access to memory, tools, and personality.
-  const messages: { role: "user" | "assistant"; content: string }[] = [];
+  const messages: { role: "user" | "assistant" | "tool"; content: string; tool_calls?: unknown[]; tool_call_id?: string }[] = [];
 
   // Build the combined tools list: file tools + read_symbio_doc
   function getAllTools(): Array<{ type: "function"; function: { name: string; description: string; parameters: Record<string, unknown> } }> {
@@ -992,7 +990,7 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
               messages: [
                 {
                   role: "system",
-                  content: buildSystemPrompt() + "\n\nYou've already gathered the information you need. Now respond to the user directly with your answer. Do NOT make any more tool calls.",
+                  content: buildSystemPrompt() + "\n\nYou've already gathered what you need — please respond to the user now. You can call tools again next round if needed.",
                 },
                 ...currentMessages,
               ],
@@ -1015,6 +1013,73 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
         data.response ||
         data.message ||
         "I'm having trouble thinking right now.";
+
+      // Save a short diary note of what the AI learned from tool calls,
+      // instead of saving the full tool call/response messages (which are
+      // huge and token-heavy). This gives the AI memory of what it read
+      // without bloating the conversation history.
+      if (toolCallDepth > 0) {
+        const diaryNotes: string[] = [];
+        for (let i = 0; i < currentMessages.length; i++) {
+          const msg = currentMessages[i];
+          // Find tool result messages and create short summaries
+          if (msg.role === "tool" && msg.content) {
+            const content = typeof msg.content === "string" ? msg.content : String(msg.content);
+            // Find the tool call that this result belongs to
+            // Look back for the assistant message with tool_calls
+            let toolName = "unknown";
+            for (let j = i - 1; j >= 0; j--) {
+              const prevMsg = currentMessages[j];
+              if (prevMsg.role === "assistant" && (prevMsg as any).tool_calls) {
+                // Find the matching tool call
+                for (const tc of (prevMsg as any).tool_calls) {
+                  if (tc.id === (msg as any).tool_call_id) {
+                    toolName = tc.function?.name || "unknown";
+                    break;
+                  }
+                }
+                break;
+              }
+            }
+
+            if (toolName === "read_symbio_doc") {
+              // Extract the doc name from the tool call args
+              let docName = "unknown";
+              for (let j = i - 1; j >= 0; j--) {
+                const prevMsg = currentMessages[j];
+                if (prevMsg.role === "assistant" && (prevMsg as any).tool_calls) {
+                  for (const tc of (prevMsg as any).tool_calls) {
+                    if (tc.id === (msg as any).tool_call_id) {
+                      try {
+                        const args = JSON.parse(tc.function?.arguments || "{}");
+                        docName = args.doc_name || args.docName || "unknown";
+                      } catch { /* use default */ }
+                      break;
+                    }
+                  }
+                  break;
+                }
+              }
+              // Create a short diary note about what was learned
+              const preview = content.substring(0, 150).replace(/\n/g, " ").trim();
+              diaryNotes.push(`📖 I read ${docName}: "${preview}..."`);
+            } else if (toolName === "file_list") {
+              diaryNotes.push(`📁 I listed files: ${content.substring(0, 100).replace(/\n/g, ", ")}`);
+            } else if (toolName === "file_read") {
+              diaryNotes.push(`📄 I read a file: ${content.substring(0, 100).replace(/\n/g, " ").trim()}`);
+            } else if (toolName === "file_write") {
+              diaryNotes.push(`✏️ I wrote to a file`);
+            }
+          }
+        }
+
+        if (diaryNotes.length > 0) {
+          // Save as a compact diary note the AI can reference next turn
+          const diaryEntry = `[My notes from this turn: ${diaryNotes.join("; ")}]`;
+          messages.push({ role: "assistant", content: diaryEntry } as any);
+          console.log(`[Symbio] Saved diary note: ${diaryEntry}`);
+        }
+      }
 
       messages.push({ role: "assistant", content: text });
       lastGeneratedText = text;
