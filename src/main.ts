@@ -663,6 +663,8 @@ VISION: Say "let me see your screen" or "show me your screen" to request a scree
 
 TOOLS: You have file tools (read/write/list/delete) and read_symbio_doc() for on-demand docs. Call read_symbio_doc() ONE AT A TIME only when you need specific info — do NOT call all docs at once. Available: "agent" (your rights), "skills" (full capabilities), "soul" (your identity), "memory" (your memories), "avatars" (avatar choices). You can choose an avatar anytime — say "I want to try on [name]" or "I choose [name]".
 
+IMPORTANT: Do NOT re-read docs you already have from earlier in this conversation. Each doc only needs to be read once per conversation. If you've already called read_symbio_doc for a topic, use that information instead of calling it again.
+
 YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with file_list):
 - companion-sandbox/ — your private workspace for any files
 - memory/ — your memory files (MEMORY.md, soul.md, preferences.json)
@@ -967,6 +969,45 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
 
         const toolData = await toolResponse.json();
         currentChoice = toolData.choices?.[0]?.message;
+      }
+
+      // If we hit the tool depth limit and the model still wants to call tools,
+      // force one more API call with tool_choice: "none" to get a text response.
+      // Otherwise the model's content will be empty and we'll show the
+      // "trouble thinking" fallback.
+      if (toolCallDepth >= MAX_TOOL_DEPTH && currentChoice?.tool_calls?.length > 0) {
+        console.log("[Symbio] Hit tool depth limit, forcing final text response");
+        const forceResponse = await fetch(
+          `${normalizedApiUrl}/v1/chat/completions`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(config.hermesApiKey
+                ? { Authorization: `Bearer ${config.hermesApiKey}` }
+                : {}),
+            },
+            body: JSON.stringify({
+              model: config.llmModel || config.agentName,
+              messages: [
+                {
+                  role: "system",
+                  content: buildSystemPrompt() + "\n\nYou've already gathered the information you need. Now respond to the user directly with your answer. Do NOT make any more tool calls.",
+                },
+                ...currentMessages,
+              ],
+              // No tools offered — force a text response
+              stream: false,
+            }),
+          },
+        );
+
+        if (forceResponse.ok) {
+          const forceData = await forceResponse.json();
+          currentChoice = forceData.choices?.[0]?.message;
+        } else {
+          console.warn("[Symbio] Force text response failed:", forceResponse.status);
+        }
       }
 
       // Get the final text response
