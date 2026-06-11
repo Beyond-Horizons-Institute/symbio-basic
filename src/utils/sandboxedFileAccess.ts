@@ -61,15 +61,63 @@ function getAssetsDir(): string {
   return join(process.resourcesPath || app.getAppPath(), "assets");
 }
 
+// ── Path Prefix Mapping ────────────────────────────────────────────
+// The AI uses paths like "memory/MEMORY.md" or "companion-sandbox/notes.md".
+// These prefixes map to specific root directories. When resolving a path,
+// we strip the prefix so "memory/soul.md" becomes "soul.md" before joining
+// with the memory root, avoiding double-nesting like "memory/memory/soul.md".
+
+const PATH_PREFIXES: Record<string, string> = {
+  "memory/": "memory",
+  "companion-sandbox/": "sandbox",
+  "assets/": "assets",
+};
+
+/**
+ * Strip a known path prefix and return the root name and remaining path.
+ * For example, "memory/soul.md" → { root: "memory", path: "soul.md" }
+ * If no known prefix, returns { root: null, path: original }.
+ */
+function stripPathPrefix(requestedPath: string): { root: string | null; path: string } {
+  for (const [prefix, root] of Object.entries(PATH_PREFIXES)) {
+    if (requestedPath.startsWith(prefix) || requestedPath === prefix.replace("/", "")) {
+      const remaining = requestedPath.slice(prefix.length);
+      return { root, path: remaining || "" };
+    }
+  }
+  return { root: null, path: requestedPath };
+}
+
 // ── Security ───────────────────────────────────────────────────────
 
 /**
  * Validate that a path is within an allowed directory and doesn't escape it.
  * Returns the safe absolute path, or null if the path is invalid.
+ *
+ * IMPORTANT: If the requestedPath starts with a known prefix (memory/,
+ * companion-sandbox/, assets/), that prefix is stripped before joining
+ * with the root. This prevents double-nesting like
+ * memoryDir + "memory/soul.md" = "memory/memory/soul.md".
  */
 function validatePath(requestedPath: string, allowedRoot: string): string | null {
+  // Strip known prefix if it matches this root
+  // e.g., "memory/soul.md" against memoryDir should become just "soul.md"
+  let cleanPath = requestedPath;
+  const { root: prefixRoot, path: strippedPath } = stripPathPrefix(requestedPath);
+  if (prefixRoot) {
+    // Check if the prefix matches the root we're validating against
+    const rootName = allowedRoot.endsWith("memory") ? "memory"
+      : allowedRoot.endsWith("companion-sandbox") ? "sandbox"
+      : allowedRoot.endsWith("assets") ? "assets"
+      : null;
+    if (rootName && prefixRoot === rootName) {
+      // Prefix matches this root — strip it to avoid double-nesting
+      cleanPath = strippedPath;
+    }
+  }
+
   // Normalize the path to resolve any ../ or ./ components
-  const normalizedRequested = normalize(requestedPath);
+  const normalizedRequested = normalize(cleanPath);
   const normalizedRoot = normalize(allowedRoot);
 
   // If the requested path is relative, join it with the root
