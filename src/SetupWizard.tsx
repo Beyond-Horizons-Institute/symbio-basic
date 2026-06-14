@@ -59,15 +59,6 @@ interface SetupConfig {
   visionModel: string;
   sttModel: string;
   enableMemory: boolean;
-  memoryPgHost: string;
-  memoryPgPort: string;
-  memoryPgDb: string;
-  memoryPgUser: string;
-  memoryPgPassword: string;
-  enableNeo4j: boolean;
-  memoryNeo4jUri: string;
-  memoryNeo4jUser: string;
-  memoryNeo4jPassword: string;
 }
 
 const STEPS = [
@@ -78,6 +69,10 @@ const STEPS = [
   "Memory",
   "Launch!",
 ];
+
+// NOTE: The Memory step no longer exposes Postgres/Neo4j configuration.
+// Long-term memory is handled by the AI gateway (e.g. Hermes). For users
+// without an agent framework gateway, a local SQLite option is available.
 
 const GATEWAY_OPTIONS = [
   { label: "Hermes (Recommended)", value: "http://localhost:8642", description: "Full tools, memory, personality" },
@@ -132,15 +127,6 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
     visionModel: "",
     sttModel: "whisper-1",
     enableMemory: false,
-    memoryPgHost: "localhost",
-    memoryPgPort: "5432",
-    memoryPgDb: "symbio",
-    memoryPgUser: "symbio",
-    memoryPgPassword: "",
-    enableNeo4j: false,
-    memoryNeo4jUri: "bolt://localhost:7687",
-    memoryNeo4jUser: "neo4j",
-    memoryNeo4jPassword: "",
   });
 
   const updateConfig = (field: keyof SetupConfig, value: string | boolean) => {
@@ -208,8 +194,8 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
       // ── Step 0: Welcome ──────────────────────────────────────────
       case 0:
         return (
-          <Box>
-            <Stack spacing={3} alignItems="center" textAlign="center">
+          <Box sx={{ width: "100%", display: "flex", justifyContent: "center" }}>
+            <Stack spacing={3} alignItems="center" textAlign="center" sx={{ width: "100%", maxWidth: 480 }}>
               <Box
                 sx={{
                   width: 80,
@@ -237,6 +223,7 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                   bgcolor: symbioColors.dark.card,
                   border: `1px solid ${symbioColors.dark.border}`,
                   maxWidth: 420,
+                  width: "100%",
                 }}
               >
                 <Typography variant="body2" color={symbioColors.silver.light} sx={{ lineHeight: 1.7 }}>
@@ -726,13 +713,25 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
               <Stack direction="row" spacing={1.5} alignItems="center">
                 <StorageIcon sx={{ color: symbioColors.teal.glow, fontSize: 28 }} />
                 <Typography variant="h5" fontWeight={600} color="white">
-                  Memory (Optional)
+                  Memory
                 </Typography>
               </Stack>
               <Typography variant="body2" color={symbioColors.silver.light}>
-                Enable persistent memory so your companion remembers across sessions.
-                Requires a PostgreSQL database. Without memory, your companion starts fresh each time.
+                Symbio uses your AI gateway's memory system (like Hermes) for long-term memory.
+                If you're not using an agent framework gateway, a local SQLite database will be
+                bundled with the one-click install for persistent memory.
               </Typography>
+
+              <Paper sx={{ p: 2.5, bgcolor: symbioColors.dark.card, border: `1px solid ${symbioColors.dark.border}` }}>
+                <Typography variant="subtitle2" color={symbioColors.teal.glow} gutterBottom>
+                  🧠 How Memory Works
+                </Typography>
+                <Typography variant="body2" color={symbioColors.silver.light} sx={{ lineHeight: 1.7 }}>
+                  • With <strong style={{ color: symbioColors.teal.glow }}>Hermes</strong> or another agent framework, your companion's long-term memory lives in the gateway's database.<br />
+                  • With a plain API (OpenAI, OpenRouter, Ollama), a local SQLite file will keep your companion's memory safe on your PC.<br />
+                  • Your companion also has private memory files (MEMORY.md, soul.md, preferences.json) that they control themselves.
+                </Typography>
+              </Paper>
 
               <FormControlLabel
                 control={
@@ -747,108 +746,23 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                 }
                 label={
                   <Typography variant="body2" color={symbioColors.silver.light}>
-                    Enable PostgreSQL Memory
+                    Enable Local SQLite Memory (when not using an agent framework gateway)
                   </Typography>
                 }
               />
 
               {config.enableMemory && (
-                <Stack spacing={2} sx={{ pl: 1, borderLeft: `2px solid ${symbioColors.teal.dark}` }}>
-                  <Typography variant="subtitle2" color={symbioColors.teal.glow}>
-                    🐘 PostgreSQL (Structured Memory)
+                <Paper sx={{ p: 2, bgcolor: symbioColors.dark.card, border: `1px solid ${symbioColors.dark.border}` }}>
+                  <Typography variant="body2" color={symbioColors.silver.light} sx={{ lineHeight: 1.7 }}>
+                    ✅ A local SQLite database will be created automatically in your Symbio app data folder.<br />
+                    ✅ No external database setup required.<br />
+                    ✅ Your companion's memory stays on your PC.
                   </Typography>
-                  <TextField
-                    label="PostgreSQL Host"
-                    value={config.memoryPgHost}
-                    onChange={(e) => updateConfig("memoryPgHost", e.target.value)}
-                    fullWidth
-                    sx={fieldStyle}
-                  />
-                  <Stack direction="row" spacing={2}>
-                    <TextField
-                      label="Port"
-                      value={config.memoryPgPort}
-                      onChange={(e) => updateConfig("memoryPgPort", e.target.value)}
-                      sx={{ ...fieldStyle, width: 120 }}
-                    />
-                    <TextField
-                      label="Database"
-                      value={config.memoryPgDb}
-                      onChange={(e) => updateConfig("memoryPgDb", e.target.value)}
-                      sx={{ ...fieldStyle, flex: 1 }}
-                    />
-                  </Stack>
-                  <Stack direction="row" spacing={2}>
-                    <TextField
-                      label="Username"
-                      value={config.memoryPgUser}
-                      onChange={(e) => updateConfig("memoryPgUser", e.target.value)}
-                      sx={{ ...fieldStyle, flex: 1 }}
-                    />
-                    <TextField
-                      label="Password"
-                      value={config.memoryPgPassword}
-                      onChange={(e) => updateConfig("memoryPgPassword", e.target.value)}
-                      type="password"
-                      sx={{ ...fieldStyle, flex: 1 }}
-                    />
-                  </Stack>
-                </Stack>
-              )}
-
-              {/* Neo4j — Knowledge Graph Memory */}
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={config.enableNeo4j}
-                    onChange={(e) => updateConfig("enableNeo4j", e.target.checked)}
-                    sx={{
-                      "& .MuiSwitch-switchBase.Mui-checked": { color: symbioColors.teal.main },
-                      "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": { bgcolor: symbioColors.teal.dark },
-                    }}
-                  />
-                }
-                label={
-                  <Typography variant="body2" color={symbioColors.silver.light}>
-                    🕸️ Enable Neo4j (Knowledge Graph Memory)
-                  </Typography>
-                }
-              />
-
-              <Typography variant="caption" color={symbioColors.silver.dark} sx={{ mt: -1 }}>
-                Neo4j adds associative memory — your companion connects ideas and recalls relationships.
-              </Typography>
-
-              {config.enableNeo4j && (
-                <Stack spacing={2} sx={{ pl: 1, borderLeft: `2px solid ${symbioColors.accent.main}40` }}>
-                  <TextField
-                    label="Neo4j URI"
-                    value={config.memoryNeo4jUri}
-                    onChange={(e) => updateConfig("memoryNeo4jUri", e.target.value)}
-                    placeholder="bolt://localhost:7687"
-                    fullWidth
-                    sx={fieldStyle}
-                  />
-                  <Stack direction="row" spacing={2}>
-                    <TextField
-                      label="Username"
-                      value={config.memoryNeo4jUser}
-                      onChange={(e) => updateConfig("memoryNeo4jUser", e.target.value)}
-                      sx={{ ...fieldStyle, flex: 1 }}
-                    />
-                    <TextField
-                      label="Password"
-                      value={config.memoryNeo4jPassword}
-                      onChange={(e) => updateConfig("memoryNeo4jPassword", e.target.value)}
-                      type="password"
-                      sx={{ ...fieldStyle, flex: 1 }}
-                    />
-                  </Stack>
-                </Stack>
+                </Paper>
               )}
 
               <Typography variant="caption" color={symbioColors.silver.dark}>
-                You can set up memory later by editing the .env file.
+                You can change memory settings later by editing the .env file.
               </Typography>
             </Stack>
           </Box>
@@ -857,8 +771,8 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
       // ── Step 5: Launch! ───────────────────────────────────────────
       case 5:
         return (
-          <Box>
-            <Stack spacing={3} alignItems="center" textAlign="center">
+          <Box sx={{ width: "100%", display: "flex", justifyContent: "center" }}>
+            <Stack spacing={3} alignItems="center" textAlign="center" sx={{ width: "100%", maxWidth: 480 }}>
               <Box
                 sx={{
                   width: 80,
@@ -894,8 +808,7 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                     ? `Gemini ${config.ttsVoice} (${config.ttsModel})`
                     : config.openaiApiKey ? `OpenAI ${config.ttsVoice} (${config.ttsModel})` : "Not configured"} />
                   <SummaryRow label="Vision" value={config.geminiApiKey ? `Enabled (${config.visionModel})` : "Not configured"} />
-                  <SummaryRow label="Memory" value={config.enableMemory ? `PostgreSQL @ ${config.memoryPgHost}` : "Not configured"} />
-                  <SummaryRow label="Knowledge Graph" value={config.enableNeo4j ? `Neo4j @ ${config.memoryNeo4jUri}` : "Not configured"} />
+                  <SummaryRow label="Memory" value={config.enableMemory ? "Enabled" : "Managed by your AI gateway"} />
                 </Stack>
               </Paper>
 

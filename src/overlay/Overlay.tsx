@@ -20,7 +20,6 @@ import { HermesTransport } from "../transport/HermesTransport";
 import { config } from "../config";
 import { parseAutoAnimation, type AnimationTarget } from "../utils/autoAnimate";
 import { shouldTriggerVision } from "../utils/autoVision";
-import { loadSessionState, markNewSession, generateGreetingPrompt, updateSessionState } from "../utils/sessionContinuity";
 
 function getMessageText(message: {
   parts?: Array<{ type: string; text?: string }>;
@@ -174,6 +173,12 @@ const Overlay = () => {
     console.log(`[Symbio] ${label} scheduled: ${target.category} in ${delayMs}ms`);
   }, [triggerAnimation]);
 
+  // Track the last animation's expected finish time so we can space
+  // subsequent animations based on actual clip duration + idle pause.
+  const animationScheduleRef = useRef<{ nextAvailableTime: number }>({
+    nextAvailableTime: 0,
+  });
+
   // Clean up animation timeouts on unmount
   useEffect(() => {
     return () => {
@@ -191,20 +196,14 @@ const Overlay = () => {
         clearTimeout(speakingFallbackRef.current);
         speakingFallbackRef.current = null;
       }
-      // Trigger any pending animations now that voice is playing.
-      // Space them out so each animation has time to play and return
-      // to idle before the next one starts. 5s gap gives enough time
-      // for most Mixamo clips (2-3s) plus a brief idle pause.
+      // Animations are already scheduled when the text arrives, so they
+      // play independently of speech. We just clear the pending queue
+      // marker here since they're now actively scheduled.
       setPendingAnimations((prev) => {
         if (prev.length > 0) {
-          // Clear any previously scheduled animations
-          animationTimeoutsRef.current.forEach(t => clearTimeout(t));
-          animationTimeoutsRef.current = [];
-          prev.forEach((target, i) => {
-            scheduleAnimation(target, i * 7000 + 500, `Auto-animation (synced) [${i+1}/${prev.length}]`);
-          });
+          console.log(`[Symbio] speaking-started: ${prev.length} animation(s) already scheduled`);
         }
-        return []; // Clear the queue
+        return [];
       });
     });
     const cleanupEnd = window.symbioAPI?.onSpeakingEnded?.(() => {
@@ -221,10 +220,9 @@ const Overlay = () => {
         clearTimeout(speakingFallbackRef.current);
         speakingFallbackRef.current = null;
       }
-      // Cancel any pending animations — the avatar should return to idle
-      // when speaking ends, not continue playing queued animations.
-      animationTimeoutsRef.current.forEach(t => clearTimeout(t));
-      animationTimeoutsRef.current = [];
+      // NOTE: We intentionally do NOT cancel pending animations here.
+      // Animations are now scheduled independently of speech so that all
+      // AI-chosen actions play even after the avatar stops talking.
     });
     return () => {
       cleanupStart?.();
@@ -247,6 +245,26 @@ const Overlay = () => {
     return () => cleanupVoice?.();
   }, []);
 
+  // ── Symbio: Listen for animation duration reports ───────────────
+  // VRMCompanion reports how long each clip actually is so we can
+  // space subsequent animations accurately instead of guessing.
+  useEffect(() => {
+    const cleanup = window.symbioAPI?.onAnimationDuration?.((data: { category: string; specific?: string; duration: number }) => {
+      console.log(`[Symbio] Overlay: animation duration reported ${data.category}${data.specific ? `/${data.specific}` : ""} = ${data.duration.toFixed(2)}s`);
+      // Update schedule so next animation starts after this one finishes
+      // plus an idle pause. A longer pause (2.5s) lets the avatar return
+      // to idle/breathing between emotes, which looks more natural when
+      // speech is still trailing behind the queued actions.
+      const now = Date.now();
+      const reportedFinish = now + data.duration * 1000 + 2500;
+      animationScheduleRef.current.nextAvailableTime = Math.max(
+        animationScheduleRef.current.nextAvailableTime,
+        reportedFinish,
+      );
+    });
+    return () => cleanup?.();
+  }, []);
+
   const getVoiceAudio = useCallback(async (text: string) => {
     try {
       // If voice is disabled, skip TTS entirely — just show text
@@ -267,14 +285,12 @@ const Overlay = () => {
       speakingFallbackRef.current = setTimeout(() => {
         console.log("[Symbio] Overlay: speaking-started fallback — starting lip sync without TTS event");
         setIsSpeaking(true);
-        // Trigger pending animations too
+        // Animations are already scheduled when the text arrives; the
+        // fallback just means lip sync starts without a TTS event. No
+        // need to reschedule animations here.
         setPendingAnimations((prev) => {
           if (prev.length > 0) {
-            animationTimeoutsRef.current.forEach(t => clearTimeout(t));
-            animationTimeoutsRef.current = [];
-            prev.forEach((target, i) => {
-              scheduleAnimation(target, i * 7000 + 500, "Auto-animation (fallback)");
-            });
+            console.log(`[Symbio] speaking-started fallback: ${prev.length} animation(s) already scheduled`);
           }
           return [];
         });
@@ -292,23 +308,42 @@ const Overlay = () => {
     }
   }, [voiceEnabled, triggerAnimation]);
 
-  // Helper to queue or immediately play animations based on voice state.
-  // When voice is enabled, animations are queued until speaking-started fires
-  // (synced with audio). When voice is disabled, play immediately.
-  const queueOrPlayAnimations = useCallback((animTargets: AnimationTarget[]) => {
+  // Helper to queue or immediately play animations.
+  // Animations are scheduled independently of speech so the AI's chosen
+  // actions always play, even if speech ends first. We use a default
+  // spacing of 5s + 1s idle pause; VRMCompanion will report actual clip
+  // durations so future animations can be spaced more accurately.
+  const queueOrPlayAnimations = useCallback((animTargets: AnimationTarget[], source: string = "unknown") => {
     if (animTargets.length === 0) return;
-    if (voiceEnabled) {
-      // Queue — will trigger when speaking-started fires
-      setPendingAnimations(animTargets);
-    } else {
-      // No voice — play animations immediately, spaced out
-      animationTimeoutsRef.current.forEach(t => clearTimeout(t));
-      animationTimeoutsRef.current = [];
-      animTargets.forEach((target, i) => {
-        scheduleAnimation(target, i * 7000 + 500, `Auto-animation (no voice) [${i+1}/${animTargets.length}]`);
-      });
-    }
-  }, [voiceEnabled, triggerAnimation, scheduleAnimation]);
+
+    console.log(`[Symbio] queueOrPlayAnimations (${source}): ${animTargets.length} target(s)`, animTargets);
+
+    // Cancel any previously scheduled auto-animations so we don't overlap
+    // old responses with new ones.
+    animationTimeoutsRef.current.forEach(t => clearTimeout(t));
+    animationTimeoutsRef.current = [];
+
+    const now = Date.now();
+    // Start from the later of "now" or the last reported animation finish time,
+    // so new animations don't stomp on a clip that's still playing.
+    let scheduleTime = Math.max(now + 500, animationScheduleRef.current.nextAvailableTime + 500);
+
+    animTargets.forEach((target, i) => {
+      const delayMs = scheduleTime - now;
+      scheduleAnimation(target, delayMs, `Auto-animation [${i+1}/${animTargets.length}]`);
+    // Default spacing: assume ~5s clip + 2.5s idle pause. VRMCompanion will
+    // send actual durations back via onAnimationDuration so we can refine.
+    scheduleTime += 7500;
+      // Also update nextAvailableTime so subsequent responses respect this schedule
+      animationScheduleRef.current.nextAvailableTime = Math.max(
+        animationScheduleRef.current.nextAvailableTime,
+        scheduleTime,
+      );
+    });
+
+    // Keep them in pendingAnimations briefly for debugging / sync
+    setPendingAnimations(animTargets);
+  }, [scheduleAnimation]);
 
   const { sendMessage } = useChat({
     transport: hermesTransport,
@@ -318,12 +353,12 @@ const Overlay = () => {
       if (text) {
         setRecentResponse(text);
         // Update session state — remember what the agent said
-        updateSessionState({ lastAgentMessage: text.substring(0, 200) });
+        window.symbioAPI?.sessionUpdate?.({ lastAgentMessage: text.substring(0, 200) });
         // Auto-animate: detect *actions* like *dances*, *waves*, etc.
         const animTargets = parseAutoAnimation(text);
         console.log(`[Symbio] parseAutoAnimation (useChat):`, { animTargets, textPreview: text.substring(0, 60) });
-        // Queue or play animations (synced with voice if enabled)
-        queueOrPlayAnimations(animTargets);
+        // Queue or play animations independently of speech
+        queueOrPlayAnimations(animTargets, "useChat");
         // Auto-vision: if the agent wants to see the screen, take a screenshot
         // Guard against infinite loops — don't trigger vision from a vision response
         if (shouldTriggerVision(text) && !visionInProgressRef.current) {
@@ -347,21 +382,26 @@ const Overlay = () => {
     // Quick restart → "still here" nod
     // Back after hours → "I noticed you were gone"
     // Back after days → genuine excitement
-    const sessionState = markNewSession();
-    const greetingPrompt = generateGreetingPrompt(config.agentConfig.displayName, sessionState);
-    console.log(`[Symbio] Session #${sessionState.sessionCount}, last seen: ${sessionState.lastSeenAt}, greeting: ${greetingPrompt.substring(0, 80)}...`);
-    window.symbioAPI?.generateText?.(greetingPrompt);
+    // Tell main process this is a new session (increments count, saves state)
+    window.symbioAPI?.sessionMarkNew?.();
+    // Get the greeting prompt from main process (it has the session state)
+    window.symbioAPI?.sessionGetGreeting?.().then((greetingPrompt) => {
+      console.log(`[Symbio] Session greeting: ${greetingPrompt?.substring(0, 80)}...`);
+      if (greetingPrompt) {
+        window.symbioAPI?.generateText?.(greetingPrompt);
+      }
+    });
 
     const cleanupText = window.symbioAPI?.onGeneratedText?.((text: string) => {
       console.log(`[Symbio] onGeneratedText received: "${text.substring(0, 80)}..."`);
       setRecentResponse(text);
       // Update session state — remember what the agent said
-      updateSessionState({ lastAgentMessage: text.substring(0, 200) });
+      window.symbioAPI?.sessionUpdate?.({ lastAgentMessage: text.substring(0, 200) });
       // Auto-animate: detect *actions* like *dances*, *waves*, etc.
       const animTargets = parseAutoAnimation(text);
       console.log(`[Symbio] parseAutoAnimation result:`, { animTargets, textPreview: text.substring(0, 60) });
-      // Queue or play animations (synced with voice if enabled)
-      queueOrPlayAnimations(animTargets);
+        // Queue or play animations independently of speech
+        queueOrPlayAnimations(animTargets, "onGeneratedText");
       // Auto-vision: if the agent wants to see the screen, take a screenshot
       // Guard against infinite loops — don't trigger vision from a vision response
       if (shouldTriggerVision(text) && !visionInProgressRef.current) {
@@ -382,7 +422,7 @@ const Overlay = () => {
     const cleanupPrompt = window.symbioAPI?.onPromptSent?.(
       (prompt: string) => {
         // Update session state — remember what the user said
-        updateSessionState({ lastUserMessage: prompt.substring(0, 200) });
+        window.symbioAPI?.sessionUpdate?.({ lastUserMessage: prompt.substring(0, 200) });
         window.symbioAPI?.generateText?.(prompt);
       },
     );
@@ -400,7 +440,7 @@ const Overlay = () => {
       if (text.trim()) {
         console.log(`[Symbio] Overlay: Received STT text: "${text}"`);
         // Update session state — remember what the user said
-        updateSessionState({ lastUserMessage: text.substring(0, 200) });
+        window.symbioAPI?.sessionUpdate?.({ lastUserMessage: text.substring(0, 200) });
         window.symbioAPI?.generateText?.(text);
       }
     });

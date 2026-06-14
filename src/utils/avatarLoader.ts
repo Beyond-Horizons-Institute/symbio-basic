@@ -382,6 +382,10 @@ export function parseAvatarChoice(text: string, avatars: AvatarChoice[]): {
       lower.includes(`i want ${nameLower}`) ||
       lower.includes(`i'll be ${nameLower}`) ||
       lower.includes(`my avatar is ${nameLower}`) ||
+      lower.includes(`i selected ${nameLower}`) ||
+      lower.includes(`i pick ${nameLower}`) ||
+      lower.includes(`i'd like ${nameLower}`) ||
+      lower.includes(`i'm going with ${nameLower}`) ||
       lower.includes(`choose ${idLower}`) ||
       lower.includes(`try on ${nameLower}`) ||
       lower.includes(`try on the ${nameLower}`) ||

@@ -24,6 +24,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync, rmSync } from "fs";
 import { join, normalize, relative, extname } from "path";
 import { app } from "electron";
+import { recordMemoryHash } from "./memoryIntegrity";
 
 // ── Configuration ──────────────────────────────────────────────────
 
@@ -345,6 +346,14 @@ export function sandboxWriteFile(requestedPath: string, content: string): FileRe
     }
 
     writeFileSync(safePath, content, "utf-8");
+
+    // If this was a memory file, record its hash so the companion can
+    // detect if it was edited outside the app later.
+    if (root === "memory") {
+      const filename = safePath.split("/").pop() || safePath.split("\\").pop() || "";
+      recordMemoryHash(filename, true);
+    }
+
     console.log(`[Symbio] Companion wrote to ${root}: ${requestedPath}`);
     return { success: true, path: safePath };
   } catch (e) {

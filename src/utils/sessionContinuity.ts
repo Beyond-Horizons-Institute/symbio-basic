@@ -10,8 +10,39 @@
  *   "Hey, welcome back! It's been about 3 hours. I was here
  *    the whole time — did you end up fixing that bug?" (warm, present)
  *
- * Data is stored in localStorage so it persists across app restarts.
+ * Data is stored in a JSON file in the memory/ directory so it persists
+ * across app restarts AND works in both the main process and renderer.
+ * Previously used localStorage (renderer-only), which meant the main
+ * process couldn't read session state on quit — sessions never got saved.
  */
+
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { join } from "path";
+
+// ── Detect which process we're in ────────────────────────────────
+// In the main process, we use app.getPath("userData") for the memory dir.
+// In the renderer, we don't have direct fs access, so we use localStorage
+// as a cache and rely on IPC to sync with the main process.
+// The main process is the source of truth — it reads/writes the JSON file.
+
+let _memoryDir: string | null = null;
+
+/**
+ * Set the memory directory path. Called from the main process on startup.
+ * In the renderer, this is never set — the renderer uses localStorage
+ * as a temporary cache and syncs via IPC.
+ */
+export function setMemoryDir(dir: string): void {
+  _memoryDir = dir;
+}
+
+/**
+ * Get the memory directory. In the main process, this uses app.getPath("userData").
+ * Returns null if not set (renderer process).
+ */
+function getMemoryDir(): string | null {
+  return _memoryDir;
+}
 
 export interface SessionState {
   /** ISO timestamp of when the user was last seen */
@@ -31,12 +62,29 @@ export interface SessionState {
 }
 
 const STORAGE_KEY = "symbio-session-state";
+const SESSION_FILE = "session-state.json";
 
 /**
- * Load session state from localStorage.
+ * Load session state.
+ * - Main process: reads from JSON file (source of truth)
+ * - Renderer: reads from localStorage (cache, synced via IPC)
  * Returns null if no state exists (first time ever).
  */
 export function loadSessionState(): SessionState | null {
+  // Main process — read from file (source of truth)
+  if (_memoryDir) {
+    try {
+      const filePath = join(_memoryDir, SESSION_FILE);
+      if (!existsSync(filePath)) return null;
+      const raw = readFileSync(filePath, "utf-8");
+      return JSON.parse(raw) as SessionState;
+    } catch (e) {
+      console.warn("[Symbio] Failed to load session state from file:", (e as Error).message);
+      // Fall through to localStorage
+    }
+  }
+
+  // Renderer — read from localStorage (cache)
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
@@ -47,13 +95,31 @@ export function loadSessionState(): SessionState | null {
 }
 
 /**
- * Save session state to localStorage.
+ * Save session state.
+ * - Main process: writes to JSON file (source of truth)
+ * - Renderer: writes to localStorage (cache) — main process will also
+ *   receive the update via IPC and write to file
  */
 export function saveSessionState(state: SessionState): void {
+  // Main process — write to file (source of truth)
+  if (_memoryDir) {
+    try {
+      if (!existsSync(_memoryDir)) {
+        mkdirSync(_memoryDir, { recursive: true });
+      }
+      const filePath = join(_memoryDir, SESSION_FILE);
+      writeFileSync(filePath, JSON.stringify(state, null, 2), "utf-8");
+    } catch (e) {
+      console.warn("[Symbio] Failed to save session state to file:", (e as Error).message);
+    }
+  }
+
+  // Also write to localStorage as a cache (works in renderer,
+  // harmless in main process since localStorage may not be available)
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch (e) {
-    console.warn("[Symbio] Failed to save session state:", e);
+  } catch {
+    // localStorage might not be available in main process — that's fine
   }
 }
 

@@ -99,3 +99,6 @@ memory/soul.md
 memory/preferences.json
 memory/sessions/*.json
 assets/avatars/chosen_avatar.json
+
+# Screenshots (user data, not for repo)
+screenshot.png

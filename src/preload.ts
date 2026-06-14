@@ -133,6 +133,18 @@ contextBridge.exposeInMainWorld("symbioAPI", {
   switchAgent: (agentName: string) =>
     ipcRenderer.invoke("switch-agent", agentName),
 
+  // ── Session State ────────────────────────────────────────────────
+  // The overlay sends session state updates to the main process
+  // so they get written to the session-state.json file.
+  sessionUpdate: (partial: { lastUserMessage?: string; lastAgentMessage?: string; lastActivity?: string; lastMood?: string }) =>
+    ipcRenderer.send("session-update", partial),
+  sessionMarkNew: () =>
+    ipcRenderer.send("session-mark-new"),
+  sessionGetGreeting: () =>
+    ipcRenderer.invoke("session-get-greeting"),
+  sessionSearch: (query: string, limit?: number) =>
+    ipcRenderer.invoke("session-search", query, limit),
+
   // ── Event Listeners ───────────────────────────────────────────
   // All listeners use onIpc() which calls removeAllListeners first
   // to prevent listener accumulation when the overlay remounts.
@@ -258,6 +270,22 @@ contextBridge.exposeInMainWorld("symbioAPI", {
     };
     return onIpc("speaking-ended", handler);
   },
+
+  // ── Animation duration feedback ───────────────────────────────
+  // VRMCompanion reports how long a played clip is so the overlay can
+  // space subsequent animations accurately.
+  reportAnimationDuration: (data: { category: string; specific?: string; duration: number }) => {
+    console.log(`[Symbio] preload: sending animation-duration ${data.category}${data.specific ? `/${data.specific}` : ""} = ${data.duration.toFixed(2)}s`);
+    ipcRenderer.send("animation-duration", data);
+  },
+  onAnimationDuration: (callback: (data: { category: string; specific?: string; duration: number }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { category: string; specific?: string; duration: number }) => {
+      console.log(`[Symbio] preload: received animation-duration ${data.category}${data.specific ? `/${data.specific}` : ""} = ${data.duration.toFixed(2)}s`);
+      callback(data);
+    };
+    return onIpc("animation-duration", handler);
+  },
+
 
   // ── Voice Toggle ────────────────────────────────────────────────
   // Enable/disable TTS voice output. When disabled, the agent
@@ -387,6 +415,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // ── Speech Synthesis (TTS) — legacy compatibility ──────────────
   speakText: (text: string) => ipcRenderer.send("speak-text", text),
   stopSpeaking: () => ipcRenderer.send("stop-speaking"),
+  reportAnimationDuration: (data: { category: string; specific?: string; duration: number }) => {
+    ipcRenderer.send("animation-duration", data);
+  },
+  onAnimationDuration: (callback: (data: { category: string; specific?: string; duration: number }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { category: string; specific?: string; duration: number }) => callback(data);
+    return onIpc("animation-duration", handler);
+  },
   onSpeakingStarted: (callback: () => void) => {
     const handler = () => callback();
     return onIpc("speaking-started", handler);

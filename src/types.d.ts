@@ -205,6 +205,13 @@ interface SymbioAPI {
   }>;
   // Animation
   playAnimation: (animation: string) => void;
+  reportAnimationDuration: (type: string, specific: string, duration: number) => void;
+  onAnimationDuration: (callback: (data: { category: string; specific?: string; duration: number }) => void) => () => void;
+  // Session state — synced to main process via IPC
+  sessionUpdate: (partial: { lastUserMessage?: string; lastAgentMessage?: string; lastActivity?: string; lastMood?: string }) => void;
+  sessionMarkNew: () => void;
+  sessionGetGreeting: () => Promise<string>;
+  sessionSearch: (query: string, limit?: number) => Promise<Array<{ date: string; summary: string; activity: string; topics: string[] }>>;
   // Event listeners
   onPromptSent: (callback: (prompt: string) => void) => () => void;
   onHotMicToggled: (callback: (isActive: boolean) => void) => () => void;

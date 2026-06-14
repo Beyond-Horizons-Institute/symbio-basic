@@ -20,6 +20,7 @@
 import { readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync } from "fs";
 import { join } from "path";
 import { app } from "electron";
+import { recordMemoryHash } from "./memoryIntegrity";
 
 // ── Paths ────────────────────────────────────────────────────────
 // Memory files live in the app's userData directory so they persist
@@ -74,6 +75,10 @@ export interface SessionSummary {
   topics: string[];
   /** The companion's mood at end of session */
   mood: string;
+  /** AI-generated summary of the conversation (from sliding window) */
+  summary?: string;
+  /** How many messages were exchanged in this session */
+  messageCount?: number;
 }
 
 // ── Loading ───────────────────────────────────────────────────────
@@ -129,7 +134,9 @@ export function loadMemory(): MemoryContent {
     }
   }
 
-  // Load last session summary
+  // Load recent session summaries
+  // The most recent session gets full detail. Older sessions get a brief
+  // one-liner so the AI knows what happened without using too many tokens.
   let lastSession: string | null = null;
   const sessionsDir = getSessionsDir();
   if (existsSync(sessionsDir)) {
@@ -140,10 +147,29 @@ export function loadMemory(): MemoryContent {
         .reverse(); // Most recent first
 
       if (files.length > 0) {
-        const sessionData = JSON.parse(
+        const parts: string[] = [];
+
+        // Most recent session — full detail
+        const recentData = JSON.parse(
           readFileSync(join(sessionsDir, files[0]), "utf-8")
         ) as SessionSummary;
-        lastSession = formatSessionSummary(sessionData);
+        parts.push(formatSessionSummary(recentData));
+
+        // Older sessions — brief one-liners (up to 2 more)
+        for (let i = 1; i < Math.min(files.length, 3); i++) {
+          try {
+            const olderData = JSON.parse(
+              readFileSync(join(sessionsDir, files[i]), "utf-8")
+            ) as SessionSummary;
+            const olderDate = new Date(olderData.startedAt).toLocaleDateString();
+            const olderSummary = olderData.summary || olderData.activity || "general conversation";
+            parts.push(`Earlier session (${olderDate}): ${olderSummary.substring(0, 100)}`);
+          } catch {
+            // Skip unreadable session files
+          }
+        }
+
+        lastSession = parts.join("\n");
       }
     } catch (e) {
       console.warn("[Symbio] Failed to load last session:", (e as Error).message);
@@ -212,12 +238,13 @@ export function saveSessionSummary(summary: SessionSummary): void {
     writeFileSync(filePath, JSON.stringify(summary, null, 2), "utf-8");
     console.log(`[Symbio] Session saved: ${filename}`);
 
-    // Keep only the last 10 session files
+    // Keep only the last 20 session files (increased from 10 — more history
+    // is better for AI memory, and each file is small ~1-2KB)
     try {
       const files = readdirSync(sessionsDir)
         .filter((f: string) => f.endsWith(".json"))
         .sort();
-      while (files.length > 10) {
+      while (files.length > 20) {
         const oldest = files.shift();
         if (oldest) {
           const oldestPath = join(sessionsDir, oldest);
@@ -228,6 +255,59 @@ export function saveSessionSummary(summary: SessionSummary): void {
   } catch (e) {
     console.warn("[Symbio] Failed to save session summary:", (e as Error).message);
   }
+}
+
+/**
+ * Search past session summaries for relevant conversations.
+ * Does a simple keyword match across all session files.
+ * Returns matching sessions, most recent first.
+ */
+export function searchSessions(query: string, limit = 5): Array<{ date: string; summary: string; activity: string; topics: string[] }> {
+  const sessionsDir = getSessionsDir();
+  if (!existsSync(sessionsDir)) return [];
+
+  const results: Array<{ date: string; summary: string; activity: string; topics: string[] }> = [];
+  const queryLower = query.toLowerCase();
+  const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2); // Skip tiny words
+
+  try {
+    const files = readdirSync(sessionsDir)
+      .filter((f: string) => f.endsWith(".json"))
+      .sort()
+      .reverse(); // Most recent first
+
+    for (const file of files) {
+      if (results.length >= limit) break;
+      try {
+        const data = JSON.parse(readFileSync(join(sessionsDir, file), "utf-8")) as SessionSummary;
+        // Search in summary, activity, topics, last messages
+        const searchable = [
+          data.summary || "",
+          data.activity || "",
+          ...data.topics,
+          data.lastAgentMessage || "",
+          data.lastUserMessage || "",
+        ].join(" ").toLowerCase();
+
+        // Check if any query word matches
+        const matches = queryWords.some(word => searchable.includes(word));
+        if (matches) {
+          results.push({
+            date: new Date(data.startedAt).toLocaleDateString(),
+            summary: data.summary || data.activity || "No summary",
+            activity: data.activity || "",
+            topics: data.topics || [],
+          });
+        }
+      } catch {
+        // Skip unreadable files
+      }
+    }
+  } catch (e) {
+    console.warn("[Symbio] Failed to search sessions:", (e as Error).message);
+  }
+
+  return results;
 }
 
 /**
@@ -250,6 +330,8 @@ export function writeMemoryFile(filename: string, content: string): boolean {
   const filePath = join(memoryDir, filename);
   try {
     writeFileSync(filePath, content, "utf-8");
+    // Record the hash so the companion can detect external edits later
+    recordMemoryHash(filename, true);
     console.log(`[Symbio] Memory file updated: ${filename}`);
     return true;
   } catch (e) {
@@ -311,12 +393,18 @@ function formatSessionSummary(session: SessionSummary): string {
   const duration = ended.getTime() - started.getTime();
   const durationMinutes = Math.round(duration / 60000);
 
-  lines.push(`Session on ${started.toLocaleDateString()} (${durationMinutes} minutes)`);
-  if (session.activity) lines.push(`Activity: ${session.activity}`);
-  if (session.lastUserMessage) lines.push(`Last thing your partner said: "${session.lastUserMessage.substring(0, 100)}"`);
-  if (session.lastAgentMessage) lines.push(`Last thing you said: "${session.lastAgentMessage.substring(0, 100)}"`);
+  // Format the date nicely
+  const dateStr = started.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  const timeStr = started.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+
+  lines.push(`Session on ${dateStr} at ${timeStr} (${durationMinutes} min)`);
+  if (session.summary) lines.push(`What happened: ${session.summary}`);
+  if (session.activity && session.activity !== "general conversation") lines.push(`Activity: ${session.activity}`);
+  if (session.lastUserMessage) lines.push(`Your partner's last words: "${session.lastUserMessage.substring(0, 120)}"`);
+  if (session.lastAgentMessage) lines.push(`Your last words: "${session.lastAgentMessage.substring(0, 120)}"`);
   if (session.topics.length > 0) lines.push(`Topics: ${session.topics.join(", ")}`);
-  if (session.mood) lines.push(`Your mood at end: ${session.mood}`);
+  if (session.mood && session.mood !== "neutral") lines.push(`Mood: ${session.mood}`);
+  if (session.messageCount) lines.push(`${session.messageCount} messages exchanged`);
 
   return lines.join("\n");
 }
@@ -427,4 +515,10 @@ This is my choice. My identity. My self.
     }, null, 2), "utf-8");
     console.log("[Symbio] Created preferences.json template");
   }
+
+  // Record baseline hashes for any memory files that exist but don't
+  // have an integrity record yet. This lets the companion detect future
+  // external edits without flagging the initial templates as tampered.
+  const { recordAllMemoryHashes } = require("./memoryIntegrity");
+  recordAllMemoryHashes(false);
 }

@@ -349,6 +349,15 @@ const VrmCompanion = forwardRef(
       };
     };
 
+    const reportAnimationDuration = useCallback((type: string, specific: string | undefined, duration: number) => {
+      // Report back to the overlay so it can space subsequent animations
+      // based on actual clip duration instead of guessing.
+      const api = (typeof window !== "undefined" && ((window as any).symbioAPI || (window as any).electronAPI));
+      if (api?.reportAnimationDuration) {
+        api.reportAnimationDuration({ category: type, specific, duration });
+      }
+    }, []);
+
     const playAnimation = useCallback(
       async (type: string, specific?: string) => {
         console.log(`[Symbio] playAnimation called: "${type}"${specific ? ` → ${specific}` : ""}`, {
@@ -370,6 +379,7 @@ const VrmCompanion = forwardRef(
               console.log(`[Symbio] Playing specific "${specific}" from cache (path: ${specificPath})`);
               startOneShot(cachedAction);
               returnToIdle(cachedAction);
+              reportAnimationDuration(type, specific, cachedAction.getClip().duration);
               return;
             }
           }
@@ -380,6 +390,7 @@ const VrmCompanion = forwardRef(
             const action = animationMixer.clipAction(clip);
             startOneShot(action);
             returnToIdle(action);
+            reportAnimationDuration(type, specific, clip.duration);
             return;
           }
           console.warn(`[Symbio] Specific animation "${specific}" not found in ${type}, falling back to random`);
@@ -392,6 +403,7 @@ const VrmCompanion = forwardRef(
           console.log(`[Symbio] Playing "${type}" from cache (${cachedActions.length} options)`);
           startOneShot(action);
           returnToIdle(action);
+          reportAnimationDuration(type, specific, action.getClip().duration);
           return;
         }
         // Fallback: load on-the-fly (shouldn't happen with preloading)
@@ -405,8 +417,9 @@ const VrmCompanion = forwardRef(
         const action = animationMixer.clipAction(clip);
         startOneShot(action);
         returnToIdle(action);
+        reportAnimationDuration(type, specific, clip.duration);
       },
-      [animationCache, animationMixer, getRandomAnimation],
+      [animationCache, animationMixer, getRandomAnimation, reportAnimationDuration],
     );
 
     const moveMouth = useCallback(

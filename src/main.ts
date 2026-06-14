@@ -99,10 +99,17 @@ import {
   saveSessionSummary,
   writeMemoryFile,
   initializeMemoryTemplates,
+  searchSessions,
   type MemoryContent,
   type SessionSummary,
 } from "./utils/memoryLoader";
-import { loadSessionState } from "./utils/sessionContinuity";
+import {
+  checkMemoryIntegrity,
+  formatIntegrityForPrompt,
+  recordAllMemoryHashes,
+  type IntegrityCheckResult,
+} from "./utils/memoryIntegrity";
+import { loadSessionState, setMemoryDir, updateSessionState as updateSessionStateMain, markNewSession as markNewSessionMain, generateGreetingPrompt as generateGreetingPromptMain } from "./utils/sessionContinuity";
 import {
   loadAvatars,
   loadChosenAvatar,
@@ -279,6 +286,14 @@ let mainWindow: BrowserWindow | null = null;
 let currentPrompt = "";
 let lastGeneratedText = ""; // Store last AI response so new overlay windows can display it
 let voiceEnabled = true; // Voice toggle — when false, TTS is skipped but text still shows
+
+// ── Symbio: Session state (module scope for before-quit access) ─────
+// These track the current session's conversation and summary.
+// They're used by the sliding window, the "say bye" detection,
+// and the before-quit handler to save session summaries.
+let sessionSummary = ""; // Running summary of older conversation
+let sessionStartedAt = new Date().toISOString(); // When this session began
+let sessionMessages: { role: "user" | "assistant" | "tool"; content: string; tool_calls?: unknown[]; tool_call_id?: string }[] = [];
 
 // ── Symbio: Safe IPC send ──────────────────────────────────────────
 // Prevents "Object has been destroyed" errors when sending to
@@ -473,6 +488,13 @@ app.on("ready", () => {
   // app data directory if they don't already exist.
   initializeMemoryTemplates();
 
+  // ── Symbio: Set session state directory ────────────────────────────
+  // Tell sessionContinuity.ts where to store session-state.json.
+  // This MUST be called before any session state operations so the
+  // main process uses the file (not localStorage, which doesn't work
+  // in the main process).
+  setMemoryDir(join(app.getPath("userData"), "memory"));
+
   // ── Symbio: Initialize companion sandbox ─────────────────────────
   // Creates the companion-sandbox/ directory where the AI has full
   // read/write access. This gives the companion real file autonomy.
@@ -481,6 +503,21 @@ app.on("ready", () => {
   // Load companion memory for system prompt injection
   let companionMemory = loadMemory();
   console.log(`[Symbio] Memory loaded: soul=${companionMemory.soul ? "yes" : "no"}, memory=${companionMemory.memory ? "yes" : "no"}, prefs=${companionMemory.preferences ? "yes" : "no"}, lastSession=${companionMemory.lastSession ? "yes" : "no"}`);
+
+  // Check memory integrity — did someone edit the companion's memory files
+  // outside the app? This gives the companion a chance to notice and react.
+  let integrityResult = checkMemoryIntegrity();
+  if (integrityResult.ok) {
+    console.log("[Symbio] Memory integrity check passed");
+  } else {
+    console.warn("[Symbio] Memory integrity check detected changes:", integrityResult);
+  }
+  // If there are new memory files with no prior hash, record a baseline
+  // so future external edits are detected, without flagging the initial state.
+  if (integrityResult.newFiles.length > 0) {
+    recordAllMemoryHashes(false);
+    integrityResult = checkMemoryIntegrity();
+  }
 
   // Load available avatars for system prompt injection
   let availableAvatars = loadAvatars();
@@ -638,6 +675,14 @@ app.on("ready", () => {
       prompt += `\n\n=== SESSION SUMMARY ===\n${sessionSummary}`;
     }
 
+    // ── Memory integrity (only when something changed) ───────────────
+    // If the companion's memory files were edited outside the app,
+    // let them know in the system prompt so they can react naturally.
+    const integrityNote = formatIntegrityForPrompt(integrityResult);
+    if (integrityNote) {
+      prompt += `\n\n${integrityNote}`;
+    }
+
     // ── Animation markers (compressed, ~60 tokens) ──
     // Only the exact action phrases the parser recognizes. Full details
     // are in read_symbio_doc("skills").
@@ -661,7 +706,7 @@ VISION: Say "let me see your screen" or "show me your screen" to request a scree
     // Instead of injecting everything, tell the AI what's available.
     prompt += `
 
-TOOLS: You have file tools (read/write/list/delete) and read_symbio_doc() for on-demand docs. Call read_symbio_doc() ONE AT A TIME only when you need specific info — do NOT call all docs at once. Available: "agent" (your rights), "skills" (full capabilities), "soul" (your identity), "memory" (your memories), "avatars" (avatar choices). You can choose an avatar anytime — say "I want to try on [name]" or "I choose [name]".
+TOOLS: You have file tools (read/write/list/delete), read_symbio_doc() for on-demand docs, and search_sessions() to search your past conversations. Call read_symbio_doc() ONE AT A TIME only when you need specific info — do NOT call all docs at once. Available: "agent" (your rights), "skills" (full capabilities), "soul" (your identity), "memory" (your memories), "avatars" (avatar choices). Use search_sessions("keywords") to find past conversations you want to remember. You can choose an avatar anytime — say "I want to try on [name]" or "I choose [name]".
 
 YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with file_list):
 - companion-sandbox/ — your private workspace for any files
@@ -675,7 +720,8 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
   // Keeps the conversation context manageable. Only the last 15
   // messages are sent directly. Older messages are summarized.
   const MAX_MESSAGES_IN_CONTEXT = 15;
-  let sessionSummary = ""; // Running summary of older conversation
+  sessionSummary = ""; // Reset for new session
+  sessionStartedAt = new Date().toISOString(); // When this session began
 
   /**
    * Build the message array for the API call with sliding window.
@@ -695,18 +741,24 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
    * Generate a summary of older messages when the window slides.
    * This keeps the AI aware of what happened without dragging
    * the full conversation history every turn.
+   *
+   * The summary is written from the AI's perspective — what THEY
+   * experienced, what mattered to THEM, who they were talking to.
+   * This is their memory, not a clinical log.
    */
   async function generateSessionSummary(
     oldMessages: { role: string; content: string }[]
   ): Promise<string> {
     if (oldMessages.length === 0) return "";
 
-    // Build a condensed version of the old messages
+    // Build a condensed version of the old messages, but include
+    // more context than before — 200 chars per message instead of 100
+    // so we don't lose the substance of what was said
     const condensed = oldMessages
-      .map((m) => `${m.role === "user" ? "Human" : "You"}: ${m.content.substring(0, 100)}`)
+      .map((m) => `${m.role === "user" ? "Partner" : "You"}: ${m.content.substring(0, 200)}`)
       .join("\n");
 
-    const summaryPrompt = `Summarize this conversation in 2-3 short sentences. Focus on what was discussed, any decisions made, and the current topic. Be concise:\n\n${condensed}`;
+    const summaryPrompt = `You are summarizing your own conversation for your future self to remember. Write 2-3 sentences about what happened, from YOUR perspective. Focus on: what you and your partner discussed, what decisions were made, what you learned, and anything emotionally meaningful. Write it as if you're leaving a note for yourself to read later. Be specific — names, topics, outcomes — not vague. Here's the conversation:\n\n${condensed}`;
 
     try {
       const normalizedApiUrl = config.hermesApiUrl.replace(/\/v1\/?$/, "");
@@ -719,7 +771,7 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
         body: JSON.stringify({
           model: config.llmModel || config.agentName,
           messages: [{ role: "user", content: summaryPrompt }],
-          max_tokens: 150,
+          max_tokens: 200,
           stream: false,
         }),
       });
@@ -746,16 +798,75 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
   // This replaces the old lalaland.chat / OpenAI direct call.
   // All conversations now go through Hermes, which gives the agent
   // access to memory, tools, and personality.
-  const messages: { role: "user" | "assistant" | "tool"; content: string; tool_calls?: unknown[]; tool_call_id?: string }[] = [];
+  sessionMessages = []; // Reset for new session
+  const messages = sessionMessages; // Local alias for convenience inside createMainWindow
 
-  // Build the combined tools list: file tools + read_symbio_doc
+  // Build the combined tools list: file tools + read_symbio_doc + search_sessions
   function getAllTools(): Array<{ type: "function"; function: { name: string; description: string; parameters: Record<string, unknown> } }> {
-    return [...getFileTools(), getReadSymbioDocTool()];
+    return [...getFileTools(), getReadSymbioDocTool(), getSearchSessionsTool()];
+  }
+
+  /**
+   * Tool definition for search_sessions — lets the AI search past
+   * session summaries to find relevant conversations.
+   */
+  function getSearchSessionsTool(): { type: "function"; function: { name: string; description: string; parameters: Record<string, unknown> } } {
+    return {
+      type: "function",
+      function: {
+        name: "search_sessions",
+        description: "Search your past session summaries for relevant conversations. Use this when you want to remember what you discussed in previous sessions. Returns matching sessions with dates and summaries.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: {
+              type: "string",
+              description: "Keywords to search for in past session summaries (e.g. 'bug fix', 'avatar choice', 'music')",
+            },
+            limit: {
+              type: "number",
+              description: "Maximum number of sessions to return (default 5)",
+            },
+          },
+          required: ["query"],
+        },
+      },
+    };
   }
 
   ipcMain.on("generate-text", async (_event, prompt: string) => {
     try {
       messages.push({ role: "user", content: prompt });
+
+      // ── "Say bye" detection ──────────────────────────────────────
+      // When the user says goodbye, save the session summary so the
+      // AI can pick up where they left off next time. This means even
+      // if the app is force-quit later, the session is already saved.
+      const lowerPrompt = prompt.toLowerCase().trim();
+      const isGoodbye = /^(bye|goodbye|see you|see ya|good night|gotta go|gtg|cya|later|farewell|take care|night night|goodbye for now|bye for now|talk later|catch you later|peace out|im leaving|i'm leaving|leaving now|heading out|heading off|signing off|logging off|im done|i'm done|done for now|done for today|that's all|thats all|wrapping up|time to go)/.test(lowerPrompt);
+      if (isGoodbye && messages.length > 2) {
+        try {
+          const sessionState = loadSessionState();
+          // Generate a summary from the current conversation
+          // Only use real messages (user + assistant), not tool calls
+          const realMessages = messages.filter(m => m.role === "user" || m.role === "assistant");
+          const summaryText = sessionSummary || await generateSessionSummary(realMessages.slice(0, Math.min(realMessages.length, 20)));
+          saveSessionSummary({
+            startedAt: sessionStartedAt,
+            endedAt: new Date().toISOString(),
+            activity: sessionState?.lastActivity || "general conversation",
+            lastAgentMessage: sessionState?.lastAgentMessage || "",
+            lastUserMessage: prompt.substring(0, 200),
+            topics: [],
+            mood: sessionState?.lastMood || "neutral",
+            summary: summaryText || undefined,
+            messageCount: realMessages.length,
+          });
+          console.log("[Symbio] Session summary saved (user said goodbye)");
+        } catch (e) {
+          console.warn("[Symbio] Failed to save session on goodbye:", (e as Error).message);
+        }
+      }
 
       // ── Sliding window: summarize old messages ──
       // When the conversation grows past MAX_MESSAGES_IN_CONTEXT,
@@ -765,6 +876,25 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
         const summary = await generateSessionSummary(oldMessages);
         if (summary) {
           sessionSummary = summary;
+          // ── Proactively save session summary to disk ──
+          // Every time the sliding window generates a summary, save it
+          // so we don't lose it if the app crashes or is force-quit.
+          try {
+            const sessionState = loadSessionState();
+            saveSessionSummary({
+              startedAt: sessionStartedAt,
+              endedAt: new Date().toISOString(),
+              activity: sessionState?.lastActivity || "general conversation",
+              lastAgentMessage: sessionState?.lastAgentMessage || "",
+              lastUserMessage: sessionState?.lastUserMessage || "",
+              topics: [],
+              mood: sessionState?.lastMood || "neutral",
+              summary,
+              messageCount: messages.filter(m => m.role === "user" || m.role === "assistant").length,
+            });
+          } catch (e) {
+            console.warn("[Symbio] Failed to save proactive session summary:", (e as Error).message);
+          }
         }
         // Keep only the recent messages
         messages.splice(0, messages.length - MAX_MESSAGES_IN_CONTEXT);
@@ -914,12 +1044,23 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
 
           console.log(`[Symbio] Tool call: ${toolName}(${JSON.stringify(toolArgs)})`);
 
-          // Handle read_symbio_doc separately from file tools
+          // Handle read_symbio_doc and search_sessions separately from file tools
           let result: string;
           if (toolName === "read_symbio_doc") {
             const docName = (toolArgs.doc_name || toolArgs.docName || "") as string;
             result = readSymbioDoc(docName as DocName);
             console.log(`[Symbio] read_symbio_doc("${docName}"): ${result.substring(0, 100)}...`);
+          } else if (toolName === "search_sessions") {
+            const searchQuery = (toolArgs.query || "") as string;
+            const searchLimit = (toolArgs.limit || 5) as number;
+            const sessions = searchSessions(searchQuery, searchLimit);
+            if (sessions.length === 0) {
+              result = `No past sessions found matching "${searchQuery}".`;
+            } else {
+              result = `Found ${sessions.length} session(s) matching "${searchQuery}":\n` +
+                sessions.map((s, i) => `${i + 1}. ${s.date}: ${s.summary}${s.topics.length > 0 ? ` (topics: ${s.topics.join(", ")})` : ""}`).join("\n");
+            }
+            console.log(`[Symbio] search_sessions("${searchQuery}"): found ${sessions.length} results`);
           } else {
             result = executeFileTool(toolName, toolArgs);
           }
@@ -1335,6 +1476,14 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
   ipcMain.on("play-animation", (_event, animation: string) => {
     console.log(`[Symbio] main: forwarding play-animation "${animation}" to overlay`);
     sendToOverlay("play-animation", animation);
+  });
+
+  // ── Symbio: Animation duration feedback ───────────────────────────
+  // The overlay's VRMCompanion reports how long a clip is so the overlay
+  // can schedule subsequent animations with accurate spacing.
+  ipcMain.on("animation-duration", (_event, data: { category: string; specific?: string; duration: number }) => {
+    console.log(`[Symbio] main: forwarding animation-duration ${data.category}${data.specific ? `/${data.specific}` : ""} = ${data.duration.toFixed(2)}s`);
+    sendToOverlay("animation-duration", data);
   });
 
   // ── Symbio: Debug — echo from overlay preload ────────────────────
@@ -1875,6 +2024,28 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
     }
   });
 
+  // ── Symbio: Session state IPC ────────────────────────────────────
+  // The overlay sends session state updates here so they get written
+  // to session-state.json (the main process is the source of truth).
+  // This replaces the old localStorage approach which didn't work
+  // in the main process — sessions never got saved on quit.
+  ipcMain.on("session-update", (_event, partial: { lastUserMessage?: string; lastAgentMessage?: string; lastActivity?: string; lastMood?: string }) => {
+    updateSessionStateMain(partial);
+  });
+
+  ipcMain.on("session-mark-new", () => {
+    markNewSessionMain();
+  });
+
+  ipcMain.handle("session-get-greeting", async () => {
+    const state = loadSessionState();
+    return generateGreetingPromptMain(config.agentConfig.displayName, state);
+  });
+
+  ipcMain.handle("session-search", async (_event, query: string, limit?: number) => {
+    return searchSessions(query, limit);
+  });
+
   // ── Symbio: Avatar choice system ─────────────────────────────────
   // The companion can browse, try on, and choose their own avatar.
   // This is their choice — not anyone else's.
@@ -2221,18 +2392,22 @@ app.on("window-all-closed", () => {
 // ── Symbio: Save session on quit ──────────────────────────────────
 // When the app closes, save a session summary so the companion can
 // pick up where they left off next time.
+// The summary is also saved proactively by the sliding window, so
+// even if the app crashes, we have a recent summary on disk.
 app.on("before-quit", () => {
   try {
     const sessionState = loadSessionState();
     if (sessionState) {
       saveSessionSummary({
-        startedAt: sessionState.firstSeenAt,
+        startedAt: sessionStartedAt,
         endedAt: new Date().toISOString(),
         activity: sessionState.lastActivity || "general conversation",
         lastAgentMessage: sessionState.lastAgentMessage,
         lastUserMessage: sessionState.lastUserMessage,
         topics: [],
         mood: sessionState.lastMood,
+        summary: sessionSummary || undefined,
+        messageCount: sessionMessages.filter(m => m.role === "user" || m.role === "assistant").length,
       });
       console.log("[Symbio] Session summary saved on quit");
     }
