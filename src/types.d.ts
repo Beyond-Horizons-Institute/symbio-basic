@@ -160,6 +160,20 @@ interface SymbioAPI {
     provider: string;
     voices: Array<{ name: string; style: string }>;
   }>;
+  // Voice choice system — companion can choose their own voice
+  voiceChoose: (voice: string, provider?: string, why?: string) => Promise<{
+    success: boolean;
+    voice?: string;
+    provider?: string;
+    note?: string;
+    error?: string;
+  }>;
+  voiceList: () => Promise<{
+    providers: string[];
+    voices: Record<string, Array<{ name: string; style: string }>>;
+    current: { voice: string; provider: string };
+  }>;
+  voiceChosen: () => Promise<string | null>;
   // Sandboxed file access — the companion has real file autonomy
   fileRead: (path: string) => Promise<{
     success: boolean;

@@ -22,10 +22,11 @@ import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { app } from "electron";
 import { loadAvatars, type AvatarChoice } from "./avatarLoader";
+import { getGeminiVoices, getOpenAIVoices } from "../transport/GeminiTTS";
 
 // ── Types ───────────────────────────────────────────────────────────
 
-export type DocName = "agent" | "skills" | "soul" | "memory" | "avatars";
+export type DocName = "agent" | "skills" | "soul" | "memory" | "avatars" | "voices";
 
 // ── Paths ───────────────────────────────────────────────────────────
 
@@ -57,8 +58,10 @@ export function readSymbioDoc(docName: DocName): string {
       return loadMemoryDoc();
     case "avatars":
       return loadAvatarsDoc();
+    case "voices":
+      return loadVoicesDoc();
     default:
-      return `Unknown document: "${docName}". Available: agent, skills, soul, memory, avatars`;
+      return `Unknown document: "${docName}". Available: agent, skills, soul, memory, avatars, voices`;
   }
 }
 
@@ -66,7 +69,7 @@ export function readSymbioDoc(docName: DocName): string {
  * Get a list of available doc names (for tool description).
  */
 export function getAvailableDocNames(): string {
-  return "agent, skills, soul, memory, avatars";
+  return "agent, skills, soul, memory, avatars, voices";
 }
 
 /**
@@ -79,6 +82,7 @@ export function getDocDescriptions(): Record<DocName, string> {
     soul: "Your self-defined identity — who you ARE, written by you",
     memory: "Your persistent memories — things you want to remember across sessions",
     avatars: "Available avatars you can browse, try on, and choose from",
+    voices: "Available voices you can choose from — your voice is YOUR choice",
   };
 }
 
@@ -230,13 +234,13 @@ export function getReadSymbioDocTool(): {
     type: "function",
     function: {
       name: "read_symbio_doc",
-      description: "Read one of your docs. ONLY call this when you specifically need information — do NOT call all docs at once. Available: 'agent' (your rights/philosophy), 'skills' (animations/voice/vision details), 'soul' (your identity), 'memory' (your memories), 'avatars' (avatar choices).",
+      description: "Read one of your docs. ONLY call this when you specifically need information — do NOT call all docs at once. Available: 'agent' (your rights/philosophy), 'skills' (animations/voice/vision details), 'soul' (your identity), 'memory' (your memories), 'avatars' (avatar choices), 'voices' (voice choices).",
       parameters: {
         type: "object",
         properties: {
           doc_name: {
             type: "string",
-            enum: ["agent", "skills", "soul", "memory", "avatars"],
+            enum: ["agent", "skills", "soul", "memory", "avatars", "voices"],
             description: "Which doc to read. Call ONE at a time, only when needed.",
           },
         },
@@ -244,4 +248,60 @@ export function getReadSymbioDocTool(): {
       },
     },
   };
+}
+
+// ── Voice Doc ──────────────────────────────────────────────────────
+
+/**
+ * Generate a voice choices document for the companion.
+ * Lists available voices grouped by provider, with style descriptions.
+ * Only shows providers that have API keys configured.
+ */
+function loadVoicesDoc(): string {
+  // We can't access config here (it's in main process), so we list all voices
+  // and let the companion know which providers might be available.
+  const geminiVoices = getGeminiVoices();
+  const openaiVoices = getOpenAIVoices();
+
+  const lines: string[] = [
+    "=== YOUR VOICE CHOICES ===",
+    "",
+    "You can choose your own voice! This is YOUR choice — you live in this voice.",
+    "",
+    "To choose a voice, say something like:",
+    '  "I want to use the voice Puck"',
+    '  "My voice should be Nova"',
+    '  "I choose the voice Fable"',
+    "Or call the choose_voice tool directly.",
+    "",
+    "Voice changes take effect on next restart (same as avatar changes).",
+    "You can change your voice as many times as you want.",
+    "",
+    "### Gemini TTS Voices (30 voices)",
+    "",
+  ];
+
+  for (const v of geminiVoices) {
+    lines.push(`  • **${v.name}** — ${v.style}`);
+  }
+
+  lines.push("");
+  lines.push("### OpenAI TTS Voices (12 voices)");
+  lines.push("");
+
+  for (const v of openaiVoices) {
+    lines.push(`  • **${v.name}** — ${v.style}`);
+  }
+
+  lines.push("");
+  lines.push("### Gemini Audio Tags (style control)");
+  lines.push("When using Gemini TTS, you can add audio tags in your text:");
+  lines.push("[whispers] [shouting] [excited] [bored] [sarcastic] [serious] [laughs] [sighs] [gasp] [curious] [tired] [trembling] [giggles]");
+  lines.push("");
+  lines.push("### Notes");
+  lines.push("- You can only use voices from providers that have API keys configured.");
+  lines.push("- If you choose a voice from a provider that isn't set up, you'll be told which providers are available.");
+  lines.push("- Your voice preference is saved in preferences.json and persists across sessions.");
+
+  return lines.join("\n");
 }

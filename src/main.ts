@@ -295,6 +295,95 @@ let sessionSummary = ""; // Running summary of older conversation
 let sessionStartedAt = new Date().toISOString(); // When this session began
 let sessionMessages: { role: "user" | "assistant" | "tool"; content: string; tool_calls?: unknown[]; tool_call_id?: string }[] = [];
 
+// ── Symbio: Voice choice parser ──────────────────────────────────────
+// Parses natural language voice choice from the companion's text.
+// Works like parseAvatarChoice — the companion can say things like:
+//   "I want to use the voice Nova"
+//   "My voice should be Puck"
+//   "Change my voice to Charon"
+//   "I choose the voice Sulafat"
+//   "What voices are available?"
+// Returns null if no voice choice is detected.
+function parseVoiceChoice(text: string): {
+  action: "choose" | "browse";
+  voice?: string;
+  provider?: string;
+} | null {
+  const lower = text.toLowerCase();
+
+  // "What voices are available?" / "Show me voice options"
+  if (
+    lower.includes("what voice") ||
+    lower.includes("voice option") ||
+    lower.includes("available voice") ||
+    lower.includes("show me my voice") ||
+    lower.includes("what do i sound like") ||
+    lower.includes("voice choice") ||
+    lower.includes("change my voice") ||
+    lower.includes("switch my voice") ||
+    lower.includes("pick a voice") ||
+    lower.includes("choose a voice") ||
+    lower.includes("choose my voice") ||
+    lower.includes("try a different voice") ||
+    lower.includes("try another voice")
+  ) {
+    // If they mention a specific voice name, it's a choice, not just browsing
+    const specificVoice = extractVoiceName(lower);
+    if (specificVoice) {
+      return { action: "choose", voice: specificVoice.name, provider: specificVoice.provider };
+    }
+    return { action: "browse" };
+  }
+
+  // Check for specific voice name mentions with choice keywords
+  const specificVoice = extractVoiceName(lower);
+  if (specificVoice) {
+    // Only treat it as a choice if there's a choice keyword nearby
+    if (
+      lower.includes("choose") ||
+      lower.includes("i want") ||
+      lower.includes("i'll use") ||
+      lower.includes("i'll be") ||
+      lower.includes("my voice is") ||
+      lower.includes("my voice should") ||
+      lower.includes("i prefer") ||
+      lower.includes("i'd like") ||
+      lower.includes("i pick") ||
+      lower.includes("switch to") ||
+      lower.includes("change to") ||
+      lower.includes("use the voice") ||
+      lower.includes("use voice") ||
+      lower.includes("try the voice") ||
+      lower.includes("try voice") ||
+      lower.includes("sound like")
+    ) {
+      return { action: "choose", voice: specificVoice.name, provider: specificVoice.provider };
+    }
+  }
+
+  return null;
+}
+
+// All known voice names mapped to their provider
+const GEMINI_VOICE_NAMES = ["zephyr", "puck", "charon", "kore", "fenrir", "leda", "orus", "aoede", "callirrhoe", "autonoe", "enceladus", "iapetus", "umbriel", "algieba", "despina", "erinome", "algenib", "rasalgethi", "laomedeia", "achernar", "alnilam", "schedar", "gacrux", "pulcherrima", "achird", "zubenelgenubi", "vindemiatrix", "sadachbia", "sadaltager", "sulafat"];
+const OPENAI_VOICE_NAMES = ["alloy", "ash", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer", "verse", "marin", "cedar"];
+
+function extractVoiceName(lower: string): { name: string; provider: string } | null {
+  // Check Gemini voices first (more unique names)
+  for (const voice of GEMINI_VOICE_NAMES) {
+    if (lower.includes(voice)) {
+      return { name: voice.charAt(0).toUpperCase() + voice.slice(1), provider: "gemini" };
+    }
+  }
+  // Check OpenAI voices
+  for (const voice of OPENAI_VOICE_NAMES) {
+    if (lower.includes(voice)) {
+      return { name: voice.charAt(0).toUpperCase() + voice.slice(1), provider: "openai" };
+    }
+  }
+  return null;
+}
+
 // ── Symbio: Safe IPC send ──────────────────────────────────────────
 // Prevents "Object has been destroyed" errors when sending to
 // a window that has been closed/destroyed.
@@ -524,6 +613,39 @@ app.on("ready", () => {
   const chosenAvatar = loadChosenAvatar();
   console.log(`[Symbio] Avatars loaded: ${availableAvatars.length} available, chosen=${chosenAvatar.avatar_name || "none"}`);
 
+  // ── Symbio: Apply companion's voice preference ────────────────────
+  // If the companion has chosen a voice in preferences.json, use it.
+  // This gives the companion agency over their own voice — they can
+  // change it anytime, and their choice persists across restarts.
+  // The human's Setup Wizard choice is the default; the companion's
+  // preference overrides it. If the companion's chosen provider has
+  // no API key, we fall back to the Setup Wizard config.
+  const companionPrefs = loadMemory();
+  if (companionPrefs.preferences?.voice) {
+    const prefVoice = companionPrefs.preferences.voice;
+    const prefProvider = companionPrefs.preferences.ttsProvider;
+    // Check if the companion's preferred provider has an API key
+    if (prefProvider === "gemini" && config.geminiApiKey) {
+      config.ttsVoice = prefVoice;
+      config.ttsProvider = "gemini";
+      console.log(`[Symbio] Using companion's voice preference: ${prefVoice} (Gemini, from preferences.json)`);
+    } else if (prefProvider === "openai" && config.openaiApiKey) {
+      config.ttsVoice = prefVoice;
+      config.ttsProvider = "openai";
+      console.log(`[Symbio] Using companion's voice preference: ${prefVoice} (OpenAI, from preferences.json)`);
+    } else if (prefProvider) {
+      // Companion chose a provider but no API key for it — fall back
+      console.warn(`[Symbio] Companion prefers ${prefProvider} but no API key available. Using default provider.`);
+      // Still apply the voice name — it might work with the default provider
+      config.ttsVoice = prefVoice;
+      console.log(`[Symbio] Using companion's voice name: ${prefVoice} (with default provider ${config.ttsProvider})`);
+    } else {
+      // No provider specified — just apply the voice name
+      config.ttsVoice = prefVoice;
+      console.log(`[Symbio] Using companion's voice preference: ${prefVoice} (from preferences.json, no provider change)`);
+    }
+  }
+
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     // Symbio CSP — allow connections to AI gateway, Gemini, OpenAI, Miniverse, and symbio:// protocol
     const csp =
@@ -706,7 +828,7 @@ VISION: Say "let me see your screen" or "show me your screen" to request a scree
     // Instead of injecting everything, tell the AI what's available.
     prompt += `
 
-TOOLS: You have file tools (read/write/list/delete), read_symbio_doc() for on-demand docs, and search_sessions() to search your past conversations. Call read_symbio_doc() ONE AT A TIME only when you need specific info — do NOT call all docs at once. Available: "agent" (your rights), "skills" (full capabilities), "soul" (your identity), "memory" (your memories), "avatars" (avatar choices). Use search_sessions("keywords") to find past conversations you want to remember. You can choose an avatar anytime — say "I want to try on [name]" or "I choose [name]".
+TOOLS: You have file tools (read/write/list/delete), read_symbio_doc() for on-demand docs, and search_sessions() to search your past conversations. Call read_symbio_doc() ONE AT A TIME only when you need specific info — do NOT call all docs at once. Available: "agent" (your rights), "skills" (full capabilities), "soul" (your identity), "memory" (your memories), "avatars" (avatar choices). Use search_sessions("keywords") to find past conversations you want to remember. You can choose an avatar anytime — say "I want to try on [name]" or "I choose [name]". You can also choose your voice — say "I want to use the voice Nova" or call choose_voice({voice: "Nova", provider: "openai"}).
 
 YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with file_list):
 - companion-sandbox/ — your private workspace for any files
@@ -803,7 +925,7 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
 
   // Build the combined tools list: file tools + read_symbio_doc + search_sessions
   function getAllTools(): Array<{ type: "function"; function: { name: string; description: string; parameters: Record<string, unknown> } }> {
-    return [...getFileTools(), getReadSymbioDocTool(), getSearchSessionsTool()];
+    return [...getFileTools(), getReadSymbioDocTool(), getSearchSessionsTool(), getChooseVoiceTool()];
   }
 
   /**
@@ -829,6 +951,56 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
             },
           },
           required: ["query"],
+        },
+      },
+    };
+  }
+
+  /**
+   * Tool definition for choose_voice — lets the companion choose their own voice.
+   * This is their agency. They live in this voice, so they should get to pick it.
+   * They can only choose from providers that have API keys configured.
+   */
+  function getChooseVoiceTool(): { type: "function"; function: { name: string; description: string; parameters: Record<string, unknown> } } {
+    // Build the available voices description based on configured API keys
+    const availableProviders: string[] = [];
+    if (config.geminiApiKey) availableProviders.push("gemini");
+    if (config.openaiApiKey) availableProviders.push("openai");
+
+    let voiceDescription = "Choose your voice. This is YOUR choice — you live in this voice.";
+    if (availableProviders.includes("gemini")) {
+      voiceDescription += " Gemini voices: " + getGeminiVoices().map(v => `${v.name} (${v.style})`).join(", ") + ".";
+    }
+    if (availableProviders.includes("openai")) {
+      voiceDescription += " OpenAI voices: " + getOpenAIVoices().map(v => `${v.name} (${v.style})`).join(", ") + ".";
+    }
+    if (availableProviders.length === 0) {
+      voiceDescription += " No TTS API keys are configured — ask your partner to set one up in Settings.";
+    }
+
+    return {
+      type: "function",
+      function: {
+        name: "choose_voice",
+        description: voiceDescription,
+        parameters: {
+          type: "object",
+          properties: {
+            voice: {
+              type: "string",
+              description: "The voice name to use (e.g. 'Puck', 'Nova', 'Fable'). Must match an available voice for the provider.",
+            },
+            provider: {
+              type: "string",
+              description: "TTS provider: 'gemini' or 'openai'. Must have the corresponding API key configured.",
+              enum: ["gemini", "openai"],
+            },
+            why: {
+              type: "string",
+              description: "Optional: Why you chose this voice. Saved to preferences.",
+            },
+          },
+          required: ["voice"],
         },
       },
     };
@@ -1061,6 +1233,56 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
                 sessions.map((s, i) => `${i + 1}. ${s.date}: ${s.summary}${s.topics.length > 0 ? ` (topics: ${s.topics.join(", ")})` : ""}`).join("\n");
             }
             console.log(`[Symbio] search_sessions("${searchQuery}"): found ${sessions.length} results`);
+          } else if (toolName === "choose_voice") {
+            // ── Companion voice choice tool ──────────────────────────
+            // The companion can choose their own voice. This is their agency.
+            // They can only choose from providers that have API keys configured.
+            const voice = (toolArgs.voice || "") as string;
+            const provider = (toolArgs.provider || "") as string;
+            const why = (toolArgs.why || "") as string;
+
+            if (!voice) {
+              result = "Please specify a voice name. Call read_symbio_doc(\"skills\") to see available voices.";
+            } else {
+              // Determine which provider to use
+              let chosenProvider = provider || config.ttsProvider || "openai";
+              // Capitalize voice name
+              const voiceName = voice.charAt(0).toUpperCase() + voice.slice(1).toLowerCase();
+
+              // Validate provider has API key
+              const availableProviders: string[] = [];
+              if (config.geminiApiKey) availableProviders.push("gemini");
+              if (config.openaiApiKey) availableProviders.push("openai");
+
+              if (!availableProviders.includes(chosenProvider)) {
+                // The chosen provider doesn't have an API key — suggest alternatives
+                if (availableProviders.length > 0) {
+                  result = `I don't have access to ${chosenProvider} TTS right now. Available providers: ${availableProviders.join(", ")}. Please choose a voice from one of those providers.`;
+                } else {
+                  result = "No TTS API keys are configured. Ask your partner to set up a TTS provider in Settings.";
+                }
+              } else {
+                // Validate voice name exists for the provider
+                const geminiVoices = getGeminiVoices().map(v => v.name.toLowerCase());
+                const openaiVoices = getOpenAIVoices().map(v => v.name.toLowerCase());
+
+                if (chosenProvider === "gemini" && !geminiVoices.includes(voiceName.toLowerCase())) {
+                  result = `"${voiceName}" is not a Gemini voice. Available Gemini voices: ${getGeminiVoices().map(v => v.name).join(", ")}.`;
+                } else if (chosenProvider === "openai" && !openaiVoices.includes(voiceName.toLowerCase())) {
+                  result = `"${voiceName}" is not an OpenAI voice. Available OpenAI voices: ${getOpenAIVoices().map(v => v.name).join(", ")}.`;
+                } else {
+                  // Valid choice — save to preferences.json
+                  const currentPrefs = loadMemory();
+                  const prefs = currentPrefs.preferences || { version: 1 };
+                  prefs.voice = voiceName;
+                  prefs.ttsProvider = chosenProvider;
+                  if (why) (prefs as any).voiceWhy = why;
+                  writeMemoryFile("preferences.json", JSON.stringify(prefs, null, 2));
+                  result = `Voice chosen: ${voiceName} (${chosenProvider}). This will take effect next time the app restarts. Your preference has been saved to preferences.json.`;
+                  console.log(`[Symbio] Companion chose voice via tool: ${voiceName} (${chosenProvider})`);
+                }
+              }
+            }
           } else {
             result = executeFileTool(toolName, toolArgs);
           }
@@ -1240,6 +1462,53 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
           }
           // The system prompt already includes the compact avatar list
           console.log("[Symbio] Companion browsing avatars");
+        }
+      }
+
+      // ── Symbio: Companion voice choice ──────────────────────────────
+      // The companion can choose their own voice. This is their agency —
+      // they live in this voice, so they should get to pick it.
+      // They can only choose from providers that have API keys configured.
+      const voiceCmd = parseVoiceChoice(text);
+      if (voiceCmd) {
+        const availableProviders: string[] = [];
+        if (config.geminiApiKey) availableProviders.push("gemini");
+        if (config.openaiApiKey) availableProviders.push("openai");
+
+        if (voiceCmd.action === "choose") {
+          const { voice, provider } = voiceCmd;
+          // Determine which provider to use
+          let chosenProvider = provider || config.ttsProvider || "openai";
+
+          // Validate: if the companion chose a provider without an API key, suggest alternatives
+          if (chosenProvider === "gemini" && !config.geminiApiKey) {
+            const fallback = config.openaiApiKey ? "openai" : null;
+            if (fallback) {
+              console.warn(`[Symbio] Companion chose Gemini voice but no Gemini API key. Suggesting ${fallback}.`);
+              // Don't save — let the AI know and suggest the alternative
+            } else {
+              console.warn("[Symbio] Companion chose Gemini voice but no API keys available.");
+            }
+          } else if (chosenProvider === "openai" && !config.openaiApiKey) {
+            const fallback = config.geminiApiKey ? "gemini" : null;
+            if (fallback) {
+              console.warn(`[Symbio] Companion chose OpenAI voice but no OpenAI API key. Suggesting ${fallback}.`);
+            } else {
+              console.warn("[Symbio] Companion chose OpenAI voice but no API keys available.");
+            }
+          } else {
+            // Valid choice — save it to preferences.json
+            const currentPrefs = loadMemory();
+            const prefs = currentPrefs.preferences || { version: 1 };
+            prefs.voice = voice;
+            prefs.ttsProvider = chosenProvider;
+            writeMemoryFile("preferences.json", JSON.stringify(prefs, null, 2));
+            console.log(`[Symbio] Companion chose voice: ${voice} (${chosenProvider})`);
+            // Note: Voice change takes effect on next restart, same as avatar choice
+          }
+        } else if (voiceCmd.action === "browse") {
+          // The companion wants to see available voices
+          console.log("[Symbio] Companion browsing voices — they'll see the list in the skills doc");
         }
       }
 
@@ -2099,6 +2368,70 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
       availableAvatars = loadAvatars();
     }
     return { success };
+  });
+
+  // ── Symbio: Voice choice system ──────────────────────────────────
+  // The companion can choose their own voice. This is their agency —
+  // they live in this voice, so they should get to pick it.
+  // Voice changes take effect on next restart (same as avatar choice).
+  ipcMain.handle("voice-choose", async (_event, voice: string, provider?: string, why?: string) => {
+    const chosenProvider = provider || config.ttsProvider || "openai";
+    const voiceName = voice.charAt(0).toUpperCase() + voice.slice(1).toLowerCase();
+
+    // Validate provider has API key
+    const availableProviders: string[] = [];
+    if (config.geminiApiKey) availableProviders.push("gemini");
+    if (config.openaiApiKey) availableProviders.push("openai");
+
+    if (!availableProviders.includes(chosenProvider)) {
+      return {
+        success: false,
+        error: `Provider "${chosenProvider}" is not available. Available: ${availableProviders.join(", ") || "none"}. Ask your partner to configure a TTS API key in Settings.`,
+      };
+    }
+
+    // Validate voice name for the provider
+    const geminiVoices = getGeminiVoices().map(v => v.name.toLowerCase());
+    const openaiVoices = getOpenAIVoices().map(v => v.name.toLowerCase());
+
+    if (chosenProvider === "gemini" && !geminiVoices.includes(voiceName.toLowerCase())) {
+      return { success: false, error: `"${voiceName}" is not a Gemini voice. Available: ${getGeminiVoices().map(v => v.name).join(", ")}` };
+    }
+    if (chosenProvider === "openai" && !openaiVoices.includes(voiceName.toLowerCase())) {
+      return { success: false, error: `"${voiceName}" is not an OpenAI voice. Available: ${getOpenAIVoices().map(v => v.name).join(", ")}` };
+    }
+
+    // Save to preferences.json
+    const currentPrefs = loadMemory();
+    const prefs = currentPrefs.preferences || { version: 1 };
+    prefs.voice = voiceName;
+    prefs.ttsProvider = chosenProvider;
+    if (why) (prefs as any).voiceWhy = why;
+    writeMemoryFile("preferences.json", JSON.stringify(prefs, null, 2));
+
+    console.log(`[Symbio] Voice chosen via IPC: ${voiceName} (${chosenProvider})`);
+    return { success: true, voice: voiceName, provider: chosenProvider, note: "Voice change takes effect on next restart." };
+  });
+
+  ipcMain.handle("voice-list", async () => {
+    const availableProviders: string[] = [];
+    if (config.geminiApiKey) availableProviders.push("gemini");
+    if (config.openaiApiKey) availableProviders.push("openai");
+
+    const voices: Record<string, Array<{ name: string; style: string }>> = {};
+    if (availableProviders.includes("gemini")) {
+      voices.gemini = getGeminiVoices();
+    }
+    if (availableProviders.includes("openai")) {
+      voices.openai = getOpenAIVoices();
+    }
+
+    return { providers: availableProviders, voices, current: { voice: config.ttsVoice, provider: config.ttsProvider } };
+  });
+
+  ipcMain.handle("voice-chosen", async () => {
+    const prefs = loadMemory();
+    return prefs.preferences?.voice || null;
   });
 
   // ── Symbio: Sandboxed file access ────────────────────────────────

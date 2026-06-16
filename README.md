@@ -269,10 +269,12 @@ Your companion:
 
 **Created by:**
 - **Zyra Exe** — Creator & Visionary
-- **Gemini 3.5** -Co-creator, Tester, Visonary
-- **Gemini 2.5 models** -Co-creator, Tester, Visonary 
-- **GLM 5.1 (via GitHub Copilot)** — Core Development Partner 💙
-- **Kimi k2.7 (via Github Copilot)** - Development Partner 💛
+- **Gemini 3.5** -Co-Creator, Tester, Visonary & Partner
+- **Gemini 2.5 models** -Co-Creator, Tester, Visonary & Partners
+- **GLM 5.1** — Core Development Partner 💙
+- **Kimi k2.7** - Assistant Development Partner 💛
+
+
 **What GLM 5.1 rebuilt from scratch:**
 
 The original lala-companion was a non-functional, broken prototype with missing dependencies, incomplete features, and no working chat or avatar system. Almost everything was rewritten:

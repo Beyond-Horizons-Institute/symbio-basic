@@ -108,6 +108,13 @@ contextBridge.exposeInMainWorld("symbioAPI", {
     return onIpc("avatar-installed", handler);
   },
 
+  // ── Voice Choice System ────────────────────────────────────────
+  // The companion can choose their own voice. This is their agency.
+  voiceChoose: (voice: string, provider?: string, why?: string) =>
+    ipcRenderer.invoke("voice-choose", voice, provider, why),
+  voiceList: () => ipcRenderer.invoke("voice-list"),
+  voiceChosen: () => ipcRenderer.invoke("voice-chosen"),
+
   // ── Auto-Screenshot ────────────────────────────────────────────
   autoScreenshotEnable: () => ipcRenderer.invoke("auto-screenshot-enable"),
   autoScreenshotDisable: () => ipcRenderer.invoke("auto-screenshot-disable"),

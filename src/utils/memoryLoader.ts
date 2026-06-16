@@ -54,6 +54,7 @@ export interface CompanionPreferences {
   version: number;
   avatar?: string | null;
   voice?: string | null;
+  ttsProvider?: string | null; // "openai" or "gemini" — which provider the voice belongs to
   language?: string | null;
   communication_style?: string | null;
   notes?: string;
@@ -198,7 +199,10 @@ export function formatMemoryForPrompt(memory: MemoryContent): string {
     const prefs = memory.preferences;
     const prefLines: string[] = [];
     if (prefs.communication_style) prefLines.push(`Communication style: ${prefs.communication_style}`);
-    if (prefs.voice) prefLines.push(`Voice preference: ${prefs.voice}`);
+    if (prefs.voice) {
+      const providerLabel = prefs.ttsProvider ? ` (${prefs.ttsProvider})` : "";
+      prefLines.push(`Voice preference: ${prefs.voice}${providerLabel}`);
+    }
     if (prefs.language) prefLines.push(`Language: ${prefs.language}`);
     if (prefs.notes && prefs.notes !== "The companion fills this in over time as they learn about their partner and themselves.") {
       prefLines.push(`Notes: ${prefs.notes}`);

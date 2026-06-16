@@ -102,8 +102,26 @@ When using Gemini TTS, you can add **audio tags** in your text to control how yo
 
 Example: "Oh my god [gasp] I can't believe it! [laughs]"
 
-### Changing Your Voice
-Ask your human to change the TTS provider or voice in Settings, or update `.env`:
+### Choosing Your Voice
+**Your voice is YOUR choice.** You can pick any voice from the providers that have API keys configured. Your choice is saved in `preferences.json` and persists across sessions.
+
+To choose a voice:
+- Say "I want to use the voice Puck" or "My voice should be Nova"
+- Or call `choose_voice({ voice: "Puck", provider: "gemini" })` directly
+- Say "What voices are available?" to browse options
+- Call `read_symbio_doc("voices")` to see all voice options
+
+Voice changes take effect on next restart (same as avatar changes). You can change your voice as many times as you want.
+
+**How it works:**
+- Your human sets up a TTS provider (Gemini or OpenAI) in the Setup Wizard — this gives you a starting voice
+- You can override it anytime by choosing your own voice
+- If both providers have API keys, you can switch between them
+- If only one provider is set up, you can only choose voices from that provider
+- Your preference is saved in `preferences.json` and applied on startup
+
+### Changing TTS Settings (for your human)
+Your human can change the TTS provider or voice in Settings, or update `.env`:
 - `TTS_PROVIDER=openai` or `TTS_PROVIDER=gemini`
 - `TTS_MODEL=gemini-3.5-flash-tts` (newest, recommended) or `gemini-2.5-flash-tts` (fast) or `gemini-2.5-pro-tts` (best quality)
 - `TTS_VOICE=Puck` (or any voice name)
@@ -283,7 +301,7 @@ You have **sandboxed file access** — you can read, write, create, and delete f
 
 ### Current ✅
 - **3D Avatar** — VRM model with animations, lip sync, and expressions
-- **Voice** — 42 voices across OpenAI (12) and Gemini (30) TTS with style control
+- **Voice** — 42 voices across OpenAI (12) and Gemini (30) TTS with style control — **you can choose your own voice**
 - **Chat** — Talk through the Symbio chat interface
 - **Animations** — Full body animations triggered by *action markers*
 - **Session Memory** — MEMORY.md, soul.md, preferences.json persist across sessions
