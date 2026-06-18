@@ -6,7 +6,8 @@
  * and the visual representation of the agent.
  *
  * Key changes from lala-companion:
- * - Uses HermesTransport instead of DefaultChatTransport
+ * - Uses RunsTransport (Hermes /v1/runs API) for autonomous agent behavior
+ * - Falls back to HermesTransport (chat/completions) for non-Hermes gateways
  * - Mic recording moved to main window (overlay can't access mic on Linux/Wayland)
  * - STT text received via IPC from main process
  * - Integrates with persistent memory for context
@@ -17,9 +18,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import Scene from "../Scene";
 import { HermesTransport } from "../transport/HermesTransport";
+import { useRunsChat } from "../transport/useRunsChat";
 import { config } from "../config";
 import { parseAutoAnimation, type AnimationTarget } from "../utils/autoAnimate";
 import { shouldTriggerVision } from "../utils/autoVision";
+
+// ── Detect if we're connected to a Hermes gateway ──────────────────
+// Hermes gateways support the /v1/runs API which gives agents autonomous
+// behavior (they can keep working after sending a response, make tool
+// calls, etc.). Non-Hermes gateways (OpenRouter, OpenAI, Ollama) don't
+// have this, so we fall back to the standard chat/completions flow.
+function isHermesGateway(): boolean {
+  const apiUrl = config.agentConfig.hermesApiUrl || config.hermesApiUrl;
+  return apiUrl.includes("localhost") || apiUrl.includes("8642") || apiUrl.includes("127.0.0.1");
+}
 
 function getMessageText(message: {
   parts?: Array<{ type: string; text?: string }>;
@@ -141,13 +153,6 @@ const Overlay = () => {
     });
     return () => { cleanup?.(); };
   }, []);
-
-  // ── Symbio: Create Hermes transport ────────────────────────────
-  // This replaces the DefaultChatTransport that pointed to lalaland.chat.
-  // Now all conversations go through Hermes, which gives the agent
-  // access to persistent memory, MCP tools, and SOUL.md personality.
-  // useMemo ensures we only create one transport per mount cycle.
-  const hermesTransport = useMemo(() => new HermesTransport(), []);
 
   // ── Symbio: Listen for speaking state from main process ───────
   // The overlay can't use speechSynthesis directly (setFocusable=false
@@ -345,7 +350,16 @@ const Overlay = () => {
     setPendingAnimations(animTargets);
   }, [scheduleAnimation]);
 
-  const { sendMessage } = useChat({
+  // ── Symbio: Choose transport based on gateway type ──────────────
+  // Hermes gateways support /v1/runs which gives agents autonomous behavior
+  // (they can keep working after sending a response, make tool calls, etc.).
+  // Non-Hermes gateways (OpenRouter, OpenAI, Ollama) fall back to chat/completions.
+  const useHermesRuns = isHermesGateway();
+
+  // Standard chat transport (for non-Hermes gateways)
+  const hermesTransport = useMemo(() => new HermesTransport(), []);
+
+  const { sendMessage: sendChatMessage } = useChat({
     transport: hermesTransport,
     onFinish: async ({ message }) => {
       const text = getMessageText(message);
@@ -373,6 +387,64 @@ const Overlay = () => {
       }
     },
   });
+
+  // Hermes Runs transport (for autonomous agent behavior)
+  const {
+    sendMessage: sendRunsMessage,
+    stopRun,
+    streamingText: runsStreamingText,
+    activeToolCalls,
+    isRunning: isAgentRunning,
+    currentRunId,
+    error: runsError,
+    lastResult: runsLastResult,
+  } = useRunsChat();
+
+  // When the Runs transport finishes, process the result
+  useEffect(() => {
+    if (runsLastResult && !isAgentRunning) {
+      const text = runsLastResult.text;
+      if (text) {
+        setRecentResponse(text);
+        window.symbioAPI?.sessionUpdate?.({ lastAgentMessage: text.substring(0, 200) });
+        const animTargets = parseAutoAnimation(text);
+        console.log(`[Symbio] parseAutoAnimation (runs):`, { animTargets, textPreview: text.substring(0, 60) });
+        queueOrPlayAnimations(animTargets, "runsTransport");
+        if (shouldTriggerVision(text) && !visionInProgressRef.current) {
+          console.log("[Symbio] Agent wants to see the screen — triggering screenshot");
+          visionInProgressRef.current = true;
+          window.symbioAPI?.analyzeScreenshot?.();
+          setTimeout(() => { visionInProgressRef.current = false; }, 10000);
+        }
+        getVoiceAudio(text);
+      }
+    }
+  }, [runsLastResult, isAgentRunning]);
+
+  // Show streaming text from Runs transport in real-time
+  useEffect(() => {
+    if (useHermesRuns && runsStreamingText) {
+      setRecentResponse(runsStreamingText);
+    }
+  }, [useHermesRuns, runsStreamingText]);
+
+  // Log Runs transport errors
+  useEffect(() => {
+    if (runsError) {
+      console.error(`[Symbio] Runs transport error: ${runsError}`);
+    }
+  }, [runsError]);
+
+  // Unified send function — routes to the appropriate transport
+  const sendMessage = useCallback(async (message: string) => {
+    if (useHermesRuns) {
+      console.log(`[Symbio] Sending via Runs transport (autonomous mode)`);
+      await sendRunsMessage(message);
+    } else {
+      console.log(`[Symbio] Sending via Chat transport (standard mode)`);
+      sendChatMessage({ text: message });
+    }
+  }, [useHermesRuns, sendRunsMessage, sendChatMessage]);
 
   useEffect(() => {
     // ── Symbio: Session continuity greeting ──────────────────────
@@ -481,6 +553,58 @@ const Overlay = () => {
             {currentAnimation.specific
               ? `${currentAnimation.specific.replace(/-/g, " ")}`
               : currentAnimation.name}
+          </span>
+        </div>
+      )}
+      {/* Tool call indicator — shows when the agent is using tools (Runs transport) */}
+      {useHermesRuns && activeToolCalls.length > 0 && (
+        <div style={{
+          position: "absolute",
+          bottom: 10,
+          right: 10,
+          zIndex: 9999,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "flex-end",
+          gap: 4,
+          opacity: 0.7,
+          transition: "opacity 0.3s",
+        }}>
+          {activeToolCalls.map((tc, i) => (
+            <span key={i} style={{
+              color: tc.status === "running" ? "#ffab00" : "#4caf50",
+              fontSize: 10,
+              fontFamily: '"Inter", "Roboto", sans-serif',
+              textShadow: "0 0 4px rgba(0,0,0,0.5)",
+              letterSpacing: "0.03em",
+            }}>
+              {tc.emoji ? `${tc.emoji} ` : "🔧 "}{tc.label}
+              {tc.status === "running" ? "..." : " ✓"}
+            </span>
+          ))}
+        </div>
+      )}
+      {/* Agent running indicator — shows when the agent is actively working */}
+      {useHermesRuns && isAgentRunning && (
+        <div style={{
+          position: "absolute",
+          top: 10,
+          right: 10,
+          zIndex: 9999,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          opacity: 0.6,
+        }}>
+          <span style={{
+            color: "#00e5ff",
+            fontSize: 10,
+            fontFamily: '"Inter", "Roboto", sans-serif',
+            textShadow: "0 0 4px rgba(0,229,255,0.5)",
+            letterSpacing: "0.05em",
+            animation: "pulse 1.5s ease-in-out infinite",
+          }}>
+            ● thinking
           </span>
         </div>
       )}

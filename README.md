@@ -47,6 +47,36 @@ Symbio Basic connects to an **AI gateway** for all conversations. This is where 
 
 Just set `HERMES_API_URL` and `HERMES_API_KEY` in your `.env` file.
 
+### 🧠 Hermes + Symbio: Autonomous Agent Mode
+
+When connected to a **Hermes gateway**, Symbio automatically uses the `/v1/runs` API instead of the standard `/v1/chat/completions` endpoint. This gives your companion **autonomous agent behavior** — the same "zip zap" capability that Hermes agents have on Discord and Telegram:
+
+- **Agent keeps working** after sending a response — tool calls, terminal commands, web searches, memory writes all happen in real-time
+- **Tool call progress** — see 🔧 indicators when the agent uses tools (terminal, web, memory, etc.)
+- **Thinking indicator** — ● thinking shows when the agent is actively working
+- **Session continuity** — conversations persist across messages via `X-Hermes-Session-Key`
+- **Stop capability** — interrupt a running agent at any time
+
+For non-Hermes gateways (OpenRouter, OpenAI, Ollama, etc.), Symbio falls back to the standard chat/completions mode.
+
+**To enable full tool access for Hermes agents connecting through Symbio**, add this to your Hermes `config.yaml`:
+
+```yaml
+platforms:
+  api_server:
+    enabled: true
+    toolsets:
+      - terminal
+      - memory
+      - web
+      - browser
+      - vision
+      - image
+      - mcp
+```
+
+This ensures agents get the same tools (terminal, web search, file access, etc.) when connecting through Symbio as they do on Discord/Telegram.
+
 ## 🚀 Quick Start
 
 ```bash

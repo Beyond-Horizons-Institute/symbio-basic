@@ -7,6 +7,12 @@
 export { HermesTransport } from "./HermesTransport";
 export type { HermesMessage, HermesMemory, HermesToolCall, HermesResponse } from "./HermesTransport";
 
+export { RunsTransport, getRunsTransport, resetRunsTransport } from "./RunsTransport";
+export type { RunEvent, RunToolCall, RunsResult, RunStatus, RunsTransportConfig } from "./RunsTransport";
+
+export { useRunsChat } from "./useRunsChat";
+export type { RunsChatMessage, UseRunsChatReturn } from "./useRunsChat";
+
 export { MemoryClient, memoryClient } from "./MemoryClient";
 export type { Memory, Entity } from "./MemoryClient";
 
