@@ -58,13 +58,22 @@ const Overlay = () => {
       localStorage.setItem("symbio-last-response", recentResponse);
     }
   }, [recentResponse]);
+
+  // ── Symbio: Send response text to main window ──────────────────
+  // The overlay no longer shows the AI speech text in the 3D bubble.
+  // Instead, we forward it to the main process so the main window can
+  // display it in the control panel — just like vision results.
+  useEffect(() => {
+    if (recentResponse) {
+      window.symbioAPI?.overlayResponseUpdate?.(recentResponse);
+    }
+  }, [recentResponse]);
   const [isLalaSpeaking, setIsLalaSpeaking] = useState(false);
   const [currentVrmUrl, setCurrentVrmUrl] = useState(config.agentConfig.vrmPath);
   const [currentAgentName, setCurrentAgentName] = useState(config.agentName);
   const [currentAnimation, setCurrentAnimation] = useState<{ name: string; specific?: string; trigger: number } | undefined>(undefined);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
-  const [pendingAnimations, setPendingAnimations] = useState<AnimationTarget[]>([]);
   // Guard against infinite vision loops — if we're already processing a vision
   // request, don't trigger another one from the vision response text
   const visionInProgressRef = useRef(false);
@@ -74,6 +83,40 @@ const Overlay = () => {
   const triggerAnimation = useCallback((name: string, specific?: string) => {
     setCurrentAnimation((prev) => ({ name, specific, trigger: (prev?.trigger ?? 0) + 1 }));
   }, []);
+
+  // ── Animation Queue (v2 — append-based, speech-synced) ───────────
+  // Previous version CLEARED all pending animations on every new call,
+  // causing "poof, gone" bugs where later animations in a sequence
+  // disappeared. This version APPENDS to a persistent queue and plays
+  // them sequentially, syncing the first animation to speech start.
+  //
+  // Speech sync: animations are timed by their textOffset (where the
+  // *action* appeared in the response). We estimate when the voice will
+  // reach that point using ~150 words/min, so *thinks* plays when the
+  // voice actually gets to "hmm", not before the sentence starts.
+  interface QueuedAnimation {
+    target: AnimationTarget;
+    source: string;       // for debugging (which code path queued it)
+    queuedAt: number;     // timestamp when queued
+    textOffset?: number;  // position in response text (for speech sync)
+    responseLength: number; // total length of the response text
+  }
+  const animationQueueRef = useRef<QueuedAnimation[]>([]);
+  const queuePlayingRef = useRef(false);
+  // Track the last animation's expected finish time so we can space
+  // subsequent animations based on actual clip duration + idle pause.
+  const animationScheduleRef = useRef<{ nextAvailableTime: number }>({
+    nextAvailableTime: 0,
+  });
+  // The text of the response currently being spoken — used to compute
+  // when each animation should fire relative to speech progress.
+  const currentSpokenTextRef = useRef<string>("");
+  // Whether speech has started for the current response.
+  const speechStartedRef = useRef(false);
+  // Fallback timeout for speaking-started (in case TTS fails).
+  const speechFallbackRef = useRef<NodeJS.Timeout | null>(null);
+  // Pending animations waiting for speech-started before they begin playing.
+  const pendingForSpeechRef = useRef<QueuedAnimation[]>([]);
 
   // ── Symbio: Listen for animation triggers ────────────────────────
   // When the user clicks an animation button in the main window,
@@ -158,58 +201,138 @@ const Overlay = () => {
   // The overlay can't use speechSynthesis directly (setFocusable=false
   // blocks audio), so we send text to main process which speaks via
   // the main window, and relay speaking-started/ended back for lip sync.
-  // When speaking starts, we also trigger any pending animations that
-  // were queued when the text arrived — this syncs animations with voice.
+  // When speaking starts, we release any animations that were waiting
+  // for speech sync (so they play in time with the voice).
   // Fallback: If speaking-started doesn't arrive within 1.5s of text,
   // start lip sync anyway (in case TTS failed or events were lost).
-  const speakingFallbackRef = useRef<NodeJS.Timeout | null>(null);
-  // Track animation timeouts so they don't get lost
-  const animationTimeoutsRef = useRef<NodeJS.Timeout[]>([]);
 
-  // Helper to schedule an animation with tracking (prevents lost animations)
-  const scheduleAnimation = useCallback((target: AnimationTarget, delayMs: number, label: string) => {
-    const timeout = setTimeout(() => {
-      console.log(`[Symbio] ${label}: ${target.category}${target.specific ? ` → ${target.specific}` : ""}`);
-      triggerAnimation(target.category, target.specific);
-      // Remove from tracking list
-      animationTimeoutsRef.current = animationTimeoutsRef.current.filter(t => t !== timeout);
-    }, delayMs);
-    animationTimeoutsRef.current.push(timeout);
-    console.log(`[Symbio] ${label} scheduled: ${target.category} in ${delayMs}ms`);
-  }, [triggerAnimation]);
-
-  // Track the last animation's expected finish time so we can space
-  // subsequent animations based on actual clip duration + idle pause.
-  const animationScheduleRef = useRef<{ nextAvailableTime: number }>({
-    nextAvailableTime: 0,
-  });
-
-  // Clean up animation timeouts on unmount
+  // Clean up speech fallback on unmount
   useEffect(() => {
     return () => {
-      animationTimeoutsRef.current.forEach(t => clearTimeout(t));
-      animationTimeoutsRef.current = [];
+      if (speechFallbackRef.current) {
+        clearTimeout(speechFallbackRef.current);
+        speechFallbackRef.current = null;
+      }
     };
   }, []);
+
+  // ── Animation queue: play next item ──────────────────────────────
+  // Plays the next animation in the queue, scheduling it based on:
+  // 1. Speech sync — if we have textOffset, delay until the voice
+  //    reaches that point in the text (~150 words/min estimate).
+  // 2. Clip spacing — ensure at least clipDuration + idle pause between
+  //    animations so they don't overlap.
+  // 3. Minimum delay — 500ms so the first animation doesn't fire
+  //    before the avatar even finishes its current state.
+  //
+  // Track when speech actually started (for speech-synced animation timing).
+  // Declared here so it's available to playNextFromQueue below.
+  const speechStartTimeRef = useRef<number>(0);
+
+  const playNextFromQueue = useCallback(() => {
+    if (queuePlayingRef.current) return; // already processing
+    const next = animationQueueRef.current[0];
+    if (!next) return;
+
+    queuePlayingRef.current = true;
+
+    const now = Date.now();
+    let delayMs: number;
+
+    // ── Speech-synced timing ──────────────────────────────────────
+    // If we have a textOffset and speech has started (or we're using
+    // the fallback), time the animation to when the voice reaches that
+    // point in the text. This fixes the "plays too soon" bug where
+    // *thinks* would fire before the voice said "hmm".
+    try {
+      if (next.textOffset !== undefined && next.responseLength > 0 && speechStartedRef.current) {
+        // Estimate speech progress: ~150 words/min = 2.5 words/sec.
+        // Count words before the action marker to estimate when the
+        // voice will reach that point.
+        const textBeforeAction = currentSpokenTextRef.current.substring(0, next.textOffset);
+        const wordsBefore = textBeforeAction.split(/\s+/).filter(Boolean).length;
+        const estimatedSpeechTimeMs = (wordsBefore / 2.5) * 1000;
+        // The speech started at speechStartTimeRef — compute when the
+        // animation should fire relative to now.
+        const speechElapsed = now - (speechStartTimeRef.current || now);
+        const targetFireTime = (speechStartTimeRef.current || now) + estimatedSpeechTimeMs;
+        delayMs = Math.max(0, targetFireTime - now);
+        // Ensure minimum spacing from last animation
+        const spacingDelay = Math.max(0, animationScheduleRef.current.nextAvailableTime - now);
+        delayMs = Math.max(delayMs, spacingDelay);
+        console.log(`[Symbio] Queue: speech-synced delay ${delayMs}ms (word ${wordsBefore}, speech elapsed ${speechElapsed}ms)`);
+      } else {
+        // No speech sync info — use clip spacing only
+        delayMs = Math.max(500, animationScheduleRef.current.nextAvailableTime - now + 500);
+        console.log(`[Symbio] Queue: spacing-only delay ${delayMs}ms`);
+      }
+    } catch (err) {
+      // Defensive: if timing calculation fails for any reason, fall back
+      // to a safe default delay so the animation still plays.
+      console.error(`[Symbio] Queue: timing calculation failed, using default delay:`, err);
+      delayMs = 500;
+    }
+
+    setTimeout(() => {
+      try {
+        // Remove from queue and play
+        animationQueueRef.current.shift();
+        console.log(`[Symbio] Queue: playing ${next.target.category}${next.target.specific ? ` → ${next.target.specific}` : ""} (from ${next.source})`);
+        triggerAnimation(next.target.category, next.target.specific);
+
+        // Default spacing: assume ~5s clip + 2.5s idle pause.
+        // VRMCompanion will report actual duration via onAnimationDuration
+        // which updates nextAvailableTime more accurately.
+        const assumedDuration = 7500;
+        animationScheduleRef.current.nextAvailableTime = Date.now() + assumedDuration;
+      } catch (err) {
+        console.error(`[Symbio] Queue: error playing animation:`, err);
+      } finally {
+        // Always release the playing lock so the queue doesn't stall
+        queuePlayingRef.current = false;
+      }
+
+      // Play next if any
+      if (animationQueueRef.current.length > 0) {
+        // Small delay before processing next to let weight settle
+        setTimeout(() => playNextFromQueue(), 100);
+      }
+    }, delayMs);
+  }, [triggerAnimation]);
+
+  // ── Release pending animations when speech starts ────────────────
+  // Animations are queued but held until speech starts (or fallback).
+  // This syncs the first animation with the voice so *thinks* doesn't
+  // play before the voice says "hmm".
+  const releasePendingForSpeech = useCallback(() => {
+    if (pendingForSpeechRef.current.length === 0) return;
+    try {
+      console.log(`[Symbio] Speech started: releasing ${pendingForSpeechRef.current.length} held animation(s)`);
+      // Move pending animations into the main queue
+      animationQueueRef.current.push(...pendingForSpeechRef.current);
+      pendingForSpeechRef.current = [];
+      playNextFromQueue();
+    } catch (err) {
+      // Defensive: if releasing fails, clear the pending list so it
+      // doesn't get stuck holding animations forever.
+      console.error(`[Symbio] Error releasing pending animations:`, err);
+      pendingForSpeechRef.current = [];
+    }
+  }, [playNextFromQueue]);
 
   useEffect(() => {
     const cleanupStart = window.symbioAPI?.onSpeakingStarted?.(() => {
       console.log("[Symbio] Overlay: speaking-started from main process");
       setIsSpeaking(true);
+      speechStartedRef.current = true;
+      speechStartTimeRef.current = Date.now();
       // Clear any fallback timeout since we got the real event
-      if (speakingFallbackRef.current) {
-        clearTimeout(speakingFallbackRef.current);
-        speakingFallbackRef.current = null;
+      if (speechFallbackRef.current) {
+        clearTimeout(speechFallbackRef.current);
+        speechFallbackRef.current = null;
       }
-      // Animations are already scheduled when the text arrives, so they
-      // play independently of speech. We just clear the pending queue
-      // marker here since they're now actively scheduled.
-      setPendingAnimations((prev) => {
-        if (prev.length > 0) {
-          console.log(`[Symbio] speaking-started: ${prev.length} animation(s) already scheduled`);
-        }
-        return [];
-      });
+      // Release any animations held for speech sync
+      releasePendingForSpeech();
     });
     const cleanupEnd = window.symbioAPI?.onSpeakingEnded?.(() => {
       console.log("[Symbio] Overlay: speaking-ended from main process");
@@ -221,22 +344,22 @@ const Overlay = () => {
         setIsSpeaking(false);
       }, 500);
       // Clear any fallback timeout
-      if (speakingFallbackRef.current) {
-        clearTimeout(speakingFallbackRef.current);
-        speakingFallbackRef.current = null;
+      if (speechFallbackRef.current) {
+        clearTimeout(speechFallbackRef.current);
+        speechFallbackRef.current = null;
       }
-      // NOTE: We intentionally do NOT cancel pending animations here.
-      // Animations are now scheduled independently of speech so that all
-      // AI-chosen actions play even after the avatar stops talking.
+      // NOTE: We intentionally do NOT cancel the animation queue here.
+      // Animations are now appended (not cleared) so all AI-chosen
+      // actions play even after the avatar stops talking.
     });
     return () => {
       cleanupStart?.();
       cleanupEnd?.();
-      if (speakingFallbackRef.current) {
-        clearTimeout(speakingFallbackRef.current);
+      if (speechFallbackRef.current) {
+        clearTimeout(speechFallbackRef.current);
       }
     };
-  }, [triggerAnimation, scheduleAnimation]);
+  }, [releasePendingForSpeech]);
 
   // ── Symbio: Listen for voice toggle state ───────────────────────
   // When the user toggles voice on/off in the main window, the
@@ -286,19 +409,16 @@ const Overlay = () => {
       window.symbioAPI?.speakText?.(text);
       // Fallback: If speaking-started doesn't arrive within 1.5s,
       // start lip sync anyway (in case TTS failed or events were lost)
-      if (speakingFallbackRef.current) clearTimeout(speakingFallbackRef.current);
-      speakingFallbackRef.current = setTimeout(() => {
+      if (speechFallbackRef.current) clearTimeout(speechFallbackRef.current);
+      speechFallbackRef.current = setTimeout(() => {
         console.log("[Symbio] Overlay: speaking-started fallback — starting lip sync without TTS event");
         setIsSpeaking(true);
-        // Animations are already scheduled when the text arrives; the
-        // fallback just means lip sync starts without a TTS event. No
-        // need to reschedule animations here.
-        setPendingAnimations((prev) => {
-          if (prev.length > 0) {
-            console.log(`[Symbio] speaking-started fallback: ${prev.length} animation(s) already scheduled`);
-          }
-          return [];
-        });
+        // Mark speech as started so held animations can be released.
+        // This fixes the "poof, gone" bug when TTS fails — animations
+        // were held forever waiting for a speaking-started that never came.
+        speechStartedRef.current = true;
+        speechStartTimeRef.current = Date.now();
+        releasePendingForSpeech();
         // Auto-stop after estimated text duration (~150 words per minute)
         const estimatedDuration = Math.max(2000, (text.split(" ").length / 150) * 60000);
         setTimeout(() => {
@@ -311,44 +431,56 @@ const Overlay = () => {
       setIsSpeaking(false);
       return undefined;
     }
-  }, [voiceEnabled, triggerAnimation]);
+  }, [voiceEnabled, releasePendingForSpeech]);
 
-  // Helper to queue or immediately play animations.
-  // Animations are scheduled independently of speech so the AI's chosen
-  // actions always play, even if speech ends first. We use a default
-  // spacing of 5s + 1s idle pause; VRMCompanion will report actual clip
-  // durations so future animations can be spaced more accurately.
-  const queueOrPlayAnimations = useCallback((animTargets: AnimationTarget[], source: string = "unknown") => {
+  // ── Animation queue: enqueue animations (APPEND, never clear) ────
+  // This is the core fix for the "poof, gone" bug. The old version
+  // CLEARED all pending animations on every call, causing later
+  // animations in a sequence to disappear. This version APPENDS to
+  // the queue and lets the sequential player handle them.
+  //
+  // Speech sync: animations are held in pendingForSpeechRef until
+  // speaking-started arrives (or the 1.5s fallback fires). This
+  // prevents animations from playing before the voice starts.
+  // Each animation's textOffset is used to time it to the corresponding
+  // point in spoken speech.
+  const queueOrPlayAnimations = useCallback((animTargets: AnimationTarget[], source: string = "unknown", responseText?: string) => {
     if (animTargets.length === 0) return;
 
     console.log(`[Symbio] queueOrPlayAnimations (${source}): ${animTargets.length} target(s)`, animTargets);
 
-    // Cancel any previously scheduled auto-animations so we don't overlap
-    // old responses with new ones.
-    animationTimeoutsRef.current.forEach(t => clearTimeout(t));
-    animationTimeoutsRef.current = [];
-
     const now = Date.now();
-    // Start from the later of "now" or the last reported animation finish time,
-    // so new animations don't stomp on a clip that's still playing.
-    let scheduleTime = Math.max(now + 500, animationScheduleRef.current.nextAvailableTime + 500);
+    const responseLength = responseText?.length ?? 0;
 
-    animTargets.forEach((target, i) => {
-      const delayMs = scheduleTime - now;
-      scheduleAnimation(target, delayMs, `Auto-animation [${i+1}/${animTargets.length}]`);
-    // Default spacing: assume ~5s clip + 2.5s idle pause. VRMCompanion will
-    // send actual durations back via onAnimationDuration so we can refine.
-    scheduleTime += 7500;
-      // Also update nextAvailableTime so subsequent responses respect this schedule
-      animationScheduleRef.current.nextAvailableTime = Math.max(
-        animationScheduleRef.current.nextAvailableTime,
-        scheduleTime,
-      );
-    });
+    // Build queue entries with text offset for speech sync
+    const entries: QueuedAnimation[] = animTargets.map(target => ({
+      target,
+      source,
+      queuedAt: now,
+      textOffset: target.textOffset,
+      responseLength,
+    }));
 
-    // Keep them in pendingAnimations briefly for debugging / sync
-    setPendingAnimations(animTargets);
-  }, [scheduleAnimation]);
+    // Store the response text for speech-progress estimation
+    if (responseText) {
+      currentSpokenTextRef.current = responseText;
+    }
+
+    // Reset speech state for this new response — we'll hold animations
+    // until speaking-started arrives (or fallback).
+    speechStartedRef.current = false;
+    speechStartTimeRef.current = 0;
+
+    // Append to pending (held for speech sync) instead of clearing
+    pendingForSpeechRef.current.push(...entries);
+
+    // If speech has already started (e.g., rapid follow-up), release immediately
+    if (speechStartedRef.current) {
+      releasePendingForSpeech();
+    }
+    // Otherwise, the speaking-started handler or fallback will release them.
+    // The fallback is set in getVoiceAudio when speak-text is sent.
+  }, [releasePendingForSpeech]);
 
   // ── Symbio: Choose transport based on gateway type ──────────────
   // Hermes gateways support /v1/runs which gives agents autonomous behavior
@@ -372,7 +504,7 @@ const Overlay = () => {
         const animTargets = parseAutoAnimation(text);
         console.log(`[Symbio] parseAutoAnimation (useChat):`, { animTargets, textPreview: text.substring(0, 60) });
         // Queue or play animations independently of speech
-        queueOrPlayAnimations(animTargets, "useChat");
+        queueOrPlayAnimations(animTargets, "useChat", text);
         // Auto-vision: if the agent wants to see the screen, take a screenshot
         // Guard against infinite loops — don't trigger vision from a vision response
         if (shouldTriggerVision(text) && !visionInProgressRef.current) {
@@ -409,7 +541,7 @@ const Overlay = () => {
         window.symbioAPI?.sessionUpdate?.({ lastAgentMessage: text.substring(0, 200) });
         const animTargets = parseAutoAnimation(text);
         console.log(`[Symbio] parseAutoAnimation (runs):`, { animTargets, textPreview: text.substring(0, 60) });
-        queueOrPlayAnimations(animTargets, "runsTransport");
+        queueOrPlayAnimations(animTargets, "runsTransport", text);
         if (shouldTriggerVision(text) && !visionInProgressRef.current) {
           console.log("[Symbio] Agent wants to see the screen — triggering screenshot");
           visionInProgressRef.current = true;
@@ -473,7 +605,7 @@ const Overlay = () => {
       const animTargets = parseAutoAnimation(text);
       console.log(`[Symbio] parseAutoAnimation result:`, { animTargets, textPreview: text.substring(0, 60) });
         // Queue or play animations independently of speech
-        queueOrPlayAnimations(animTargets, "onGeneratedText");
+        queueOrPlayAnimations(animTargets, "onGeneratedText", text);
       // Auto-vision: if the agent wants to see the screen, take a screenshot
       // Guard against infinite loops — don't trigger vision from a vision response
       if (shouldTriggerVision(text) && !visionInProgressRef.current) {
@@ -522,7 +654,7 @@ const Overlay = () => {
   return (
     <div style={{ height: "100%", width: "100%" }}>
       <Scene
-        virtualText={recentResponse}
+        virtualText=""
         voiceUrl={voiceUrl}
         vrmUrl={currentVrmUrl}
         animation={currentAnimation}

@@ -41,6 +41,8 @@ interface ElectronAPI {
   ) => () => void;
   onGeneratedText: (callback: (text: string) => void) => () => void;
   onError: (callback: (error: string) => void) => () => void;
+  // Overlay response text → Main window (replaces 3D text bubble)
+  overlayResponseUpdate: (text: string) => void;
   // Speech synthesis (TTS via main process)
   speakText: (text: string) => void;
   stopSpeaking: () => void;
@@ -244,6 +246,8 @@ interface SymbioAPI {
   onError: (callback: (error: string) => void) => () => void;
   onAgentSwitched: (callback: (agent: { name: string; vrmPath: string; displayName: string; color: string; emoji: string }) => void) => () => void;
   onPlayAnimation: (callback: (animation: string) => void) => () => void;
+  // Overlay response text → Main window (replaces 3D text bubble)
+  overlayResponseUpdate: (text: string) => void;
   // Speech synthesis (TTS via main process)
   speakText: (text: string) => void;
   stopSpeaking: () => void;

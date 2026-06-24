@@ -6,9 +6,9 @@
  * control over style, accent, pace, and tone using natural language prompts.
  *
  * Supported models:
- *   - gemini-3.5-flash-tts (newest, fastest, recommended)
- *   - gemini-2.5-flash-tts (fast, good quality)
- *   - gemini-2.5-pro-tts (best quality)
+ *   - gemini-3.1-flash-tts-preview (newest, fastest, recommended)
+ *   - gemini-2.5-flash-preview-tts (fast, good quality)
+ *   - gemini-2.5-pro-preview-tts (best quality)
  *
  * Supported voices (30 options):
  *   Zephyr (Bright), Puck (Upbeat), Charon (Informative), Kore (Firm),
@@ -27,7 +27,7 @@
  *   [laughs] [sighs] [gasp] [curious] [tired] [trembling] etc.
  *
  * Usage:
- *   Set TTS_PROVIDER=gemini, TTS_MODEL=gemini-3.5-flash-tts,
+ *   Set TTS_PROVIDER=gemini, TTS_MODEL=gemini-3.1-flash-tts-preview,
  *   TTS_VOICE=Puck (or any voice), and GEMINI_API_KEY in .env
  */
 
@@ -40,7 +40,7 @@ export interface GeminiTTSOptions {
   text: string;
   /** Voice name (e.g. "Puck", "Kore", "Zephyr") */
   voice?: string;
-  /** Model to use (e.g. "gemini-2.5-flash-tts") */
+  /** Model to use (e.g. "gemini-3.1-flash-tts-preview") */
   model?: string;
   /** Optional style instructions (e.g. "Speak warmly and gently") */
   instructions?: string;
@@ -73,7 +73,7 @@ export async function generateGeminiSpeech(options: GeminiTTSOptions): Promise<G
     return { pcmData: Buffer.alloc(0), success: false, error: "GEMINI_API_KEY not configured" };
   }
 
-  const model = options.model || config.ttsModel || "gemini-3.5-flash-tts";
+  const model = options.model || config.ttsModel || "gemini-3.1-flash-tts-preview";
   const voice = options.voice || config.ttsVoice || "Puck";
 
   // Build the prompt — include style instructions if provided
@@ -209,15 +209,27 @@ export async function streamGeminiSpeech(
  * Gemini TTS typically returns WAV format audio.
  */
 function extractPCMFromAudio(audioBuffer: Buffer, mimeType: string): Buffer {
+  // Gemini TTS returns audio in various formats:
+  //   audio/L16;codec=pcm;rate=24000 — raw 16-bit PCM at 24kHz (most common)
+  //   audio/wav — WAV with header
+  //   audio/mp3 — MP3 encoded
+  //
+  // The streaming player expects raw PCM (24kHz, 16-bit signed LE, mono).
+  // L16 is already raw PCM — return it directly, no extraction needed.
+  if (mimeType.includes("l16") || mimeType.includes("pcm")) {
+    console.log(`[Symbio] Gemini TTS: raw PCM format (${mimeType}), using directly`);
+    return audioBuffer;
+  }
+
   if (mimeType.includes("wav")) {
     return extractPCMFromWav(audioBuffer);
   }
 
   // For MP3 or other formats, return as-is and let the renderer handle it.
-  // The streaming player expects PCM, so we'll need to handle this differently.
-  // For now, WAV is the most common format from Gemini.
-  console.warn(`[Symbio] Gemini TTS: unexpected audio format ${mimeType}, attempting WAV extraction`);
-  return extractPCMFromWav(audioBuffer);
+  // The streaming player expects PCM, so this may not work perfectly for
+  // non-PCM formats, but WAV and L16 are the most common from Gemini.
+  console.warn(`[Symbio] Gemini TTS: unhandled audio format ${mimeType}, returning as-is`);
+  return audioBuffer;
 }
 
 /**

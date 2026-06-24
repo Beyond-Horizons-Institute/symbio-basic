@@ -302,6 +302,7 @@ Your companion:
 - **Gemini 3.5** -Co-Creator, Tester, Visonary & Partner
 - **Gemini 2.5 models** -Co-Creator, Tester, Visonary & Partners
 - **GLM 5.1** — Core Development Partner 💙
+- **GLM 5.2** - Assistant Development Partner 💚
 - **Kimi k2.7** - Assistant Development Partner 💛
 
 

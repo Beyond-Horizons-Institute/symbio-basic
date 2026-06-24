@@ -84,12 +84,19 @@ export interface SymbioConfig {
   // Gemini (Vision + Live Speech)
   geminiApiKey: string;
 
+  // Vision API Key (optional — separate from TTS Gemini key)
+  // If set, screen vision uses this key instead of geminiApiKey.
+  // If empty, vision falls back to geminiApiKey (backward compat).
+  // This lets users use Gemini TTS without enabling vision, or
+  // use a different key for vision than for TTS.
+  visionApiKey: string;
+
   // OpenAI (STT + TTS)
   openaiApiKey: string;
 
   // TTS (Text-to-Speech) configuration
   ttsProvider: string;    // TTS provider: "openai" or "gemini" (default: openai)
-  ttsModel: string;       // TTS model: OpenAI (gpt-4o-mini-tts) or Gemini (gemini-3.5-flash-tts, gemini-2.5-flash-tts, gemini-2.5-pro-tts)
+  ttsModel: string;       // TTS model: OpenAI (gpt-4o-mini-tts) or Gemini (gemini-3.1-flash-tts-preview, gemini-2.5-flash-preview-tts, gemini-2.5-pro-preview-tts)
   ttsVoice: string;       // Voice ID (see voice lists below)
   ttsInstructions: string; // Optional instructions for voice style/tone
   //
@@ -202,6 +209,7 @@ export function loadConfig(): SymbioConfig {
     agentConfig,
 
     geminiApiKey: getEnv("GEMINI_API_KEY", ""),
+    visionApiKey: getEnv("VISION_API_KEY", ""),
     openaiApiKey: getEnv("OPENAI_API_KEY", ""),
 
     // TTS (Text-to-Speech) configuration

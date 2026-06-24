@@ -17,12 +17,27 @@ import { contextBridge, ipcRenderer } from "electron";
  * listeners first. This prevents listener accumulation when the overlay
  * remounts (React key changes cause unmount/remount cycles).
  *
+ * **Error wrapping:** The handler is wrapped in a try/catch so that if
+ * the callback throws (e.g., a ref is null during a remount race, or
+ * the animation queue hits an unexpected state), the error is logged
+ * and swallowed instead of becoming an unhandled `ERR_UNHANDLED_ERROR`
+ * on the IpcRenderer EventEmitter (which crashes the renderer).
+ *
  * Returns a cleanup function that removes the specific handler.
  */
 function onIpc(channel: string, handler: (...args: any[]) => void): () => void {
+  // Wrap the handler so any thrown error is caught and logged,
+  // preventing ERR_UNHANDLED_ERROR crashes on the IpcRenderer.
+  const wrappedHandler = (...args: any[]) => {
+    try {
+      handler(...args);
+    } catch (err) {
+      console.error(`[Symbio] IPC handler for "${channel}" threw an error:`, err);
+    }
+  };
   ipcRenderer.removeAllListeners(channel);
-  ipcRenderer.on(channel, handler as any);
-  return () => ipcRenderer.removeListener(channel, handler as any);
+  ipcRenderer.on(channel, wrappedHandler as any);
+  return () => ipcRenderer.removeListener(channel, wrappedHandler as any);
 }
 
 contextBridge.exposeInMainWorld("symbioAPI", {
@@ -223,6 +238,13 @@ contextBridge.exposeInMainWorld("symbioAPI", {
     const handler = (_event: Electron.IpcRendererEvent, text: string) =>
       callback(text);
     return onIpc("generated-text", handler);
+  },
+
+  // ── Overlay response text → Main window ────────────────────────
+  // The overlay sends its current response text here so the main
+  // window can display it (instead of the 3D text bubble).
+  overlayResponseUpdate: (text: string) => {
+    ipcRenderer.send("overlay-response-update", text);
   },
 
   onError: (callback: (error: string) => void) => {

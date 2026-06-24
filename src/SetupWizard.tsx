@@ -56,6 +56,7 @@ interface SetupConfig {
   ttsVoice: string;
   ttsInstructions: string;
   geminiApiKey: string;
+  visionApiKey: string;
   visionModel: string;
   sttModel: string;
   enableMemory: boolean;
@@ -124,6 +125,7 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
     ttsVoice: "fable",
     ttsInstructions: "",
     geminiApiKey: "",
+    visionApiKey: "",
     visionModel: "",
     sttModel: "whisper-1",
     enableMemory: false,
@@ -292,6 +294,21 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                   fullWidth
                   required
                   sx={fieldStyle}
+                />
+              )}
+
+              {/* Hermes URL — editable so users can change the port.
+                  Each Hermes agent can have a different API server port,
+                  so we let users override the default 8642. */}
+              {gatewayPreset === "http://localhost:8642" && (
+                <TextField
+                  label="Hermes Gateway URL"
+                  value={config.hermesApiUrl}
+                  onChange={(e) => updateConfig("hermesApiUrl", e.target.value)}
+                  placeholder="http://localhost:8642"
+                  fullWidth
+                  sx={fieldStyle}
+                  helperText="Default is http://localhost:8642. If your Hermes agent uses a different port (e.g. 8645), change it here."
                 />
               )}
 
@@ -483,7 +500,7 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                       // Switch default voice/model when provider changes
                       if (e.target.value === "gemini") {
                         updateConfig("ttsVoice", "Puck");
-                        updateConfig("ttsModel", "gemini-3.5-flash-tts");
+                        updateConfig("ttsModel", "gemini-3.1-flash-tts-preview");
                       } else {
                         updateConfig("ttsVoice", "fable");
                         updateConfig("ttsModel", "gpt-4o-mini-tts");
@@ -520,7 +537,7 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                     fullWidth
                     type="password"
                     sx={{ mt: 2, ...fieldStyle }}
-                    helperText="Required for Gemini TTS (also used for screen vision)"
+                    helperText="Required for Gemini TTS"
                   />
                 )}
 
@@ -542,11 +559,11 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                     label="TTS Model"
                     value={config.ttsModel}
                     onChange={(e) => updateConfig("ttsModel", e.target.value)}
-                    placeholder={config.ttsProvider === "gemini" ? "gemini-3.5-flash-tts" : "gpt-4o-mini-tts"}
+                    placeholder={config.ttsProvider === "gemini" ? "gemini-3.1-flash-tts-preview" : "gpt-4o-mini-tts"}
                     fullWidth
                     sx={fieldStyle}
                     helperText={config.ttsProvider === "gemini"
-                      ? "Gemini TTS models: gemini-3.5-flash-tts, gemini-2.5-flash-tts, gemini-2.5-pro-tts"
+                      ? "Gemini TTS models: gemini-3.1-flash-tts-preview (newest), gemini-2.5-flash-preview-tts, gemini-2.5-pro-preview-tts"
                       : "OpenAI TTS model name"}
                   />
                   <FormControl fullWidth sx={fieldStyle}>
@@ -662,13 +679,14 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                   Great for co-creating, gaming, and research together.
                 </Typography>
                 <TextField
-                  label="Gemini API Key"
-                  value={config.geminiApiKey}
-                  onChange={(e) => updateConfig("geminiApiKey", e.target.value)}
-                  placeholder="AIza..."
+                  label="Gemini API Key (Vision)"
+                  value={config.visionApiKey}
+                  onChange={(e) => updateConfig("visionApiKey", e.target.value)}
+                  placeholder="AIza... (leave empty to use TTS key or disable vision)"
                   fullWidth
                   type="password"
                   sx={fieldStyle}
+                  helperText="Only needed if your main LLM can't see images. If you use Gemini TTS above, you can leave this empty to share that key. Clear this field to disable vision independently of TTS."
                 />
                 <FormControl fullWidth sx={{ mt: 2, ...fieldStyle }}>
                   <InputLabel sx={{ color: symbioColors.silver.light }}>Vision Model (Fallback)</InputLabel>
@@ -807,7 +825,7 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                   <SummaryRow label="Voice" value={config.ttsProvider === "gemini"
                     ? `Gemini ${config.ttsVoice} (${config.ttsModel})`
                     : config.openaiApiKey ? `OpenAI ${config.ttsVoice} (${config.ttsModel})` : "Not configured"} />
-                  <SummaryRow label="Vision" value={config.geminiApiKey ? `Enabled (${config.visionModel})` : "Not configured"} />
+                  <SummaryRow label="Vision" value={(config.visionApiKey || config.geminiApiKey) ? `Enabled (${config.visionModel})` : "Not configured"} />
                   <SummaryRow label="Memory" value={config.enableMemory ? "Enabled" : "Managed by your AI gateway"} />
                 </Stack>
               </Paper>

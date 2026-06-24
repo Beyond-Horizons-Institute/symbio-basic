@@ -634,11 +634,31 @@ app.on("ready", () => {
       config.ttsProvider = "openai";
       console.log(`[Symbio] Using companion's voice preference: ${prefVoice} (OpenAI, from preferences.json)`);
     } else if (prefProvider) {
-      // Companion chose a provider but no API key for it — fall back
-      console.warn(`[Symbio] Companion prefers ${prefProvider} but no API key available. Using default provider.`);
-      // Still apply the voice name — it might work with the default provider
-      config.ttsVoice = prefVoice;
-      console.log(`[Symbio] Using companion's voice name: ${prefVoice} (with default provider ${config.ttsProvider})`);
+      // Companion chose a provider but no API key for it.
+      // Their voice choice is still honored IF the voice name is valid
+      // for the currently-active provider. This handles the case where
+      // a human switches providers (e.g. removes OpenAI, adds Gemini) —
+      // the companion's old voice preference may still work if the name
+      // exists in both providers.
+      const activeProvider = config.ttsProvider || "openai";
+      const geminiVoiceNames = getGeminiVoices().map(v => v.name.toLowerCase());
+      const openaiVoiceNames = getOpenAIVoices().map(v => v.name.toLowerCase());
+      const prefVoiceLower = prefVoice.toLowerCase();
+
+      const isValidForActive =
+        (activeProvider === "gemini" && geminiVoiceNames.includes(prefVoiceLower)) ||
+        (activeProvider === "openai" && openaiVoiceNames.includes(prefVoiceLower));
+
+      if (isValidForActive) {
+        // Voice name is valid for the active provider — honor it!
+        config.ttsVoice = prefVoice;
+        console.log(`[Symbio] Using companion's voice "${prefVoice}" with active provider ${activeProvider} (voice name is valid)`);
+      } else {
+        // Voice name isn't valid for the active provider.
+        // Don't apply it (would cause API errors), but log clearly so
+        // the companion knows to re-choose with the new provider.
+        console.warn(`[Symbio] Companion prefers "${prefVoice}" (${prefProvider}) but that voice isn't available for ${activeProvider}. Using Setup Wizard voice "${config.ttsVoice}" instead. The companion can re-choose with choose_voice.`);
+      }
     } else {
       // No provider specified — just apply the voice name
       config.ttsVoice = prefVoice;
@@ -1167,21 +1187,19 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
         messages.push({ role: "assistant", content: text });
         lastGeneratedText = text;
         sendToOverlay("generated-text", text);
-        // If Hermes returned an animation hint, forward it to the overlay
-        if (data.animation) {
-          console.log(`[Symbio] Hermes animation hint: "${data.animation}"`);
-          sendToOverlay("play-animation", data.animation);
-        }
-        // If Hermes returned an emotion, forward it to the overlay
-        if (data.emotion && data.emotion !== "neutral") {
-          console.log(`[Symbio] Hermes emotion hint: "${data.emotion}"`);
-          sendToOverlay("play-animation", data.emotion);
-        }
+        sendToMain("generated-text", text);
+        // NOTE: Hermes animation/emotion hints are intentionally NOT forwarded
+        // as separate play-animation IPC. The overlay's *action* parser already
+        // extracts animations from the text (e.g. *dances*), and forwarding
+        // them separately caused a competing trigger path that stomped on the
+        // animation queue — the "poof, gone" bug. The text-based *action*
+        // markers are the single source of truth for auto-animations now.
         return;
       }
 
       const data = await response.json();
       const choice = data.choices?.[0]?.message;
+      console.log(`[Symbio] API response received: content=${choice?.content ? `"${choice.content.substring(0, 80)}..."` : "(empty)"}, tool_calls=${choice?.tool_calls?.length || 0}, finish_reason=${data.choices?.[0]?.finish_reason || "unknown"}`);
 
       // ── Handle tool calls (file access, etc.) ────────────────────
       // When the companion uses file tools, we execute them locally
@@ -1391,17 +1409,12 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
 
       messages.push({ role: "assistant", content: text });
       lastGeneratedText = text;
+      console.log(`[Symbio] Sending generated-text to overlay: "${text.substring(0, 80)}..." (${text.length} chars)`);
       sendToOverlay("generated-text", text);
-      // If Hermes returned an animation hint, forward it to the overlay
-      if (data.animation) {
-        console.log(`[Symbio] Hermes animation hint: "${data.animation}"`);
-        sendToOverlay("play-animation", data.animation);
-      }
-      // If Hermes returned an emotion, forward it to the overlay
-      if (data.emotion && data.emotion !== "neutral") {
-        console.log(`[Symbio] Hermes emotion hint: "${data.emotion}"`);
-        sendToOverlay("play-animation", data.emotion);
-      }
+      sendToMain("generated-text", text);
+      // NOTE: Hermes animation/emotion hints intentionally NOT forwarded here.
+      // See note above — the *action* text parser is the single animation source.
+      // Forwarding these separately caused the "poof, gone" queue-stomping bug.
 
       // Check for auto-screenshot commands in the companion's response
       const screenshotCmd = parseAutoScreenshotCommand(text);
@@ -1589,14 +1602,10 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
           messages.push({ role: "assistant", content: text });
           lastGeneratedText = text;
           sendToOverlay("generated-text", text);
+          sendToMain("generated-text", text);
           sendToMain("vision-result", text);
-          // Forward animation/emotion hints from vision response
-          if (data.animation) {
-            sendToOverlay("play-animation", data.animation);
-          }
-          if (data.emotion && data.emotion !== "neutral") {
-            sendToOverlay("play-animation", data.emotion);
-          }
+          // NOTE: Hermes animation/emotion hints intentionally NOT forwarded.
+          // The *action* text parser handles animations from the response text.
         } else {
           // Fallback: try Gemini if Hermes vision fails
           if (gemini.isConfigured) {
@@ -1728,9 +1737,9 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
           messages.push({ role: "assistant", content: text });
           lastGeneratedText = text;
           sendToOverlay("generated-text", text);
-          // Forward animation hints
-          if (data.animation) sendToOverlay("play-animation", data.animation);
-          if (data.emotion && data.emotion !== "neutral") sendToOverlay("play-animation", data.emotion);
+          sendToMain("generated-text", text);
+          // NOTE: Hermes animation/emotion hints intentionally NOT forwarded.
+          // The *action* text parser handles animations from the response text.
         }
       }
     } catch (e) {
@@ -2293,6 +2302,14 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
     }
   });
 
+  // ── Symbio: Overlay response text → Main window ──────────────────
+  // The overlay sends its current response text here so the main window
+  // can display it. This handles streaming text from the Runs transport
+  // (which the overlay manages directly) and keeps both windows in sync.
+  ipcMain.on("overlay-response-update", (_event, text: string) => {
+    sendToMain("generated-text", text);
+  });
+
   // ── Symbio: Session state IPC ────────────────────────────────────
   // The overlay sends session state updates here so they get written
   // to session-state.json (the main process is the source of truth).
@@ -2562,6 +2579,7 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
       visionModel: config.visionModel,
       sttModel: config.sttModel,
       geminiApiKey: config.geminiApiKey,
+      visionApiKey: config.visionApiKey,
       chosenAvatar: chosen.avatar_name ? chosen : null,
     };
   });
@@ -2606,6 +2624,7 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
       if (setupConfig.ttsInstructions) lines.push(`TTS_INSTRUCTIONS=${setupConfig.ttsInstructions}`);
       if (setupConfig.sttModel && setupConfig.sttModel !== "whisper-1") lines.push(`STT_MODEL=${setupConfig.sttModel}`);
       if (setupConfig.geminiApiKey) lines.push(`GEMINI_API_KEY=${setupConfig.geminiApiKey}`);
+      if (setupConfig.visionApiKey) lines.push(`VISION_API_KEY=${setupConfig.visionApiKey}`);
       if (setupConfig.visionModel) lines.push(`VISION_MODEL=${setupConfig.visionModel}`);
 
       // Memory — PostgreSQL
@@ -2653,6 +2672,7 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
       if (setupConfig.ttsInstructions) config.ttsInstructions = setupConfig.ttsInstructions as string;
       if (setupConfig.sttModel) config.sttModel = setupConfig.sttModel as string;
       if (setupConfig.geminiApiKey) config.geminiApiKey = setupConfig.geminiApiKey as string;
+      if (setupConfig.visionApiKey) config.visionApiKey = setupConfig.visionApiKey as string;
       if (setupConfig.visionModel) config.visionModel = setupConfig.visionModel as string;
       if (setupConfig.enableMemory) {
         config.memoryPgHost = (setupConfig.memoryPgHost as string) || "localhost";
@@ -2704,6 +2724,7 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
         visionModel: config.visionModel,
         sttModel: config.sttModel,
         geminiApiKey: config.geminiApiKey,
+        visionApiKey: config.visionApiKey,
       };
       sendToMain("config-updated", configUpdate);
       sendToOverlay("config-updated", configUpdate);

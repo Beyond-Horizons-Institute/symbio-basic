@@ -26,7 +26,10 @@ export class GeminiClient {
   private model: string;
 
   constructor() {
-    this.apiKey = config.geminiApiKey;
+    // Vision uses visionApiKey if set, otherwise falls back to geminiApiKey.
+    // This lets users use Gemini TTS without enabling vision, or use
+    // a different key for vision than for TTS.
+    this.apiKey = config.visionApiKey || config.geminiApiKey;
     this.model = config.visionModel || "gemini-3.5-flash"; // Configurable vision model
   }
 

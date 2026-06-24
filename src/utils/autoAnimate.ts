@@ -15,6 +15,13 @@ export interface AnimationTarget {
   category: string;
   /** Optional specific animation file (without path/extension) to play instead of random */
   specific?: string;
+  /**
+   * Character offset in the original text where this action marker appeared.
+   * Used by the animation queue to time the animation to the corresponding
+   * point in spoken speech (so *thinks* plays when the voice reaches "hmm",
+   * not before the sentence even starts).
+   */
+  textOffset?: number;
 }
 
 // Maps action phrases to animation targets.
@@ -170,6 +177,9 @@ export function parseAutoAnimation(text: string): AnimationTarget[] {
 
   for (const match of matches) {
     const action = match[1].toLowerCase().trim();
+    // Character offset where this action marker appears in the text.
+    // Used to time the animation to the corresponding point in speech.
+    const textOffset = match.index ?? 0;
 
     // Only match EXACT action phrases — no substring matching.
     // This prevents false triggers like "I think we should dance"
@@ -178,7 +188,7 @@ export function parseAutoAnimation(text: string): AnimationTarget[] {
       const key = `${ACTION_MAP[action].category}:${ACTION_MAP[action].specific ?? ""}`;
       if (!seen.has(key)) {
         seen.add(key);
-        results.push(ACTION_MAP[action]);
+        results.push({ ...ACTION_MAP[action], textOffset });
       }
     }
     // If the exact phrase isn't in the map, skip it.

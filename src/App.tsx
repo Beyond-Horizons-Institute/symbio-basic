@@ -53,6 +53,7 @@ const App = () => {
   });
   const [selectedAgent, setSelectedAgent] = useState(config.agentName);
   const [visionResult, setVisionResult] = useState<string>("");
+  const [recentResponse, setRecentResponse] = useState<string>("");
   const [mcpExpanded, setMcpExpanded] = useState(false);
   const [mcpCategories, setMcpCategories] = useState<MCPToolCategory[]>([]);
   const [mcpToolInput, setMcpToolInput] = useState("");
@@ -257,6 +258,21 @@ const App = () => {
           setVisionResult(result.description);
         } else if (result?.error) {
           setVisionResult(`Error: ${result.error}`);
+        }
+      },
+    );
+    return () => cleanup?.();
+  }, []);
+
+  // ── Symbio: Listen for AI response text ─────────────────────────
+  // The AI's speech text now appears in the main window instead of
+  // the overlay's 3D bubble. This makes it cleaner for voice-only,
+  // research, coding, and gaming use cases.
+  useEffect(() => {
+    const cleanup = window.symbioAPI?.onGeneratedText?.(
+      (text: string) => {
+        if (text) {
+          setRecentResponse(text);
         }
       },
     );
@@ -570,6 +586,21 @@ const App = () => {
                 Send
               </Button>
             </Paper>
+
+            {/* ── AI Response Display ──────────────────────────────── */}
+            {/* The companion's speech text appears here instead of the
+                overlay's 3D bubble. This keeps the overlay clean for
+                voice-only, research, coding, and gaming use cases. */}
+            {recentResponse && (
+              <Paper sx={{ p: 2, backgroundColor: symbioColors.dark.card, border: `1px solid ${symbioColors.teal.dark}`, maxHeight: 300, overflow: "auto" }}>
+                <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.5 }}>
+                  {agentConfig.emoji} {agentConfig.displayName}
+                </Typography>
+                <Typography variant="body1" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
+                  {recentResponse}
+                </Typography>
+              </Paper>
+            )}
 
             <FormControlLabel
               control={
