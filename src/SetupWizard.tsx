@@ -60,6 +60,15 @@ interface SetupConfig {
   visionModel: string;
   sttModel: string;
   enableMemory: boolean;
+  // Long-term memory upgrades (all optional — local SQLite is always on)
+  embeddingApiUrl: string;
+  embeddingModel: string;
+  embeddingApiKey: string;
+  embeddingDimensions: string;
+  memoryPgUrl: string;
+  summaryModel: string;
+  summaryApiUrl: string;
+  summaryApiKey: string;
 }
 
 const STEPS = [
@@ -128,7 +137,15 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
     visionApiKey: "",
     visionModel: "",
     sttModel: "whisper-1",
-    enableMemory: false,
+    enableMemory: true,
+    embeddingApiUrl: "",
+    embeddingModel: "",
+    embeddingApiKey: "",
+    embeddingDimensions: "768",
+    memoryPgUrl: "",
+    summaryModel: "",
+    summaryApiUrl: "",
+    summaryApiKey: "",
   });
 
   const updateConfig = (field: keyof SetupConfig, value: string | boolean) => {
@@ -735,9 +752,10 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                 </Typography>
               </Stack>
               <Typography variant="body2" color={symbioColors.silver.light}>
-                Symbio uses your AI gateway's memory system (like Hermes) for long-term memory.
-                If you're not using an agent framework gateway, a local SQLite database will be
-                bundled with the one-click install for persistent memory.
+                Your companion always keeps a local memory database on your PC — it works
+                offline with zero setup. Every 15 messages (and when you say goodbye), Symbio
+                distills the conversation into a durable memory so nothing important is lost.
+                You can optionally add semantic search and cloud sync below.
               </Typography>
 
               <Paper sx={{ p: 2.5, bgcolor: symbioColors.dark.card, border: `1px solid ${symbioColors.dark.border}` }}>
@@ -745,8 +763,10 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                   🧠 How Memory Works
                 </Typography>
                 <Typography variant="body2" color={symbioColors.silver.light} sx={{ lineHeight: 1.7 }}>
-                  • With <strong style={{ color: symbioColors.teal.glow }}>Hermes</strong> or another agent framework, your companion's long-term memory lives in the gateway's database.<br />
-                  • With a plain API (OpenAI, OpenRouter, Ollama), a local SQLite file will keep your companion's memory safe on your PC.<br />
+                  • <strong style={{ color: symbioColors.teal.glow }}>Local SQLite (always on)</strong> — durable memory lives on your PC, no setup, fully offline.<br />
+                  • <strong style={{ color: symbioColors.teal.glow }}>Embeddings (optional)</strong> — add an embedding model (OpenAI/Ollama) so your companion recalls by meaning, not just keywords.<br />
+                  • <strong style={{ color: symbioColors.teal.glow }}>Cloud sync (optional)</strong> — add a Postgres URL (e.g. Neon) to mirror memories to the cloud.<br />
+                  • <strong style={{ color: symbioColors.teal.glow }}>Hermes</strong> — when connected, Hermes also remembers your Symbio sessions in its own memory.<br />
                   • Your companion also has private memory files (MEMORY.md, soul.md, preferences.json) that they control themselves.
                 </Typography>
               </Paper>
@@ -764,7 +784,7 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                 }
                 label={
                   <Typography variant="body2" color={symbioColors.silver.light}>
-                    Enable Local SQLite Memory (when not using an agent framework gateway)
+                    Enable rolling memory summaries (recommended — distills conversations into durable memory)
                   </Typography>
                 }
               />
@@ -772,11 +792,113 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
               {config.enableMemory && (
                 <Paper sx={{ p: 2, bgcolor: symbioColors.dark.card, border: `1px solid ${symbioColors.dark.border}` }}>
                   <Typography variant="body2" color={symbioColors.silver.light} sx={{ lineHeight: 1.7 }}>
-                    ✅ A local SQLite database will be created automatically in your Symbio app data folder.<br />
-                    ✅ No external database setup required.<br />
-                    ✅ Your companion's memory stays on your PC.
+                    ✅ A local SQLite memory database is created automatically in your Symbio app data folder.<br />
+                    ✅ No external database setup required to get started.<br />
+                    ✅ Your companion's memory stays on your PC (and syncs to the cloud only if you add a Postgres URL below).<br />
+                    ✅ Add an embedding model below for meaning-based recall.
                   </Typography>
                 </Paper>
+              )}
+
+              {/* ── Optional memory upgrades ────────────────────────── */}
+              {config.enableMemory && (
+                <Stack spacing={2}>
+                  <Typography variant="subtitle2" color={symbioColors.teal.glow}>
+                    🔎 Semantic Recall (optional)
+                  </Typography>
+                  <Typography variant="caption" color={symbioColors.silver.dark}>
+                    Add an embedding model so your companion recalls memories by meaning, not just keywords.
+                    Works with Ollama, OpenAI, or any OpenAI-compatible endpoint. Leave blank to use keyword search.
+                  </Typography>
+                  <TextField
+                    label="Embedding API URL"
+                    value={config.embeddingApiUrl}
+                    onChange={(e) => updateConfig("embeddingApiUrl", e.target.value)}
+                    placeholder="e.g. http://localhost:11434 (Ollama) or https://api.openai.com/v1"
+                    fullWidth
+                    sx={fieldStyle}
+                  />
+                  <Stack direction="row" spacing={1.5}>
+                    <TextField
+                      label="Embedding Model"
+                      value={config.embeddingModel}
+                      onChange={(e) => updateConfig("embeddingModel", e.target.value)}
+                      placeholder="e.g. embeddinggemma, nomic-embed-text, text-embedding-3-small"
+                      fullWidth
+                      sx={fieldStyle}
+                    />
+                    <TextField
+                      label="Dimensions"
+                      value={config.embeddingDimensions}
+                      onChange={(e) => updateConfig("embeddingDimensions", e.target.value)}
+                      placeholder="768"
+                      sx={{ ...fieldStyle, maxWidth: 130 }}
+                    />
+                  </Stack>
+                  <TextField
+                    label="Embedding API Key (optional)"
+                    value={config.embeddingApiKey}
+                    onChange={(e) => updateConfig("embeddingApiKey", e.target.value)}
+                    placeholder="Leave blank to reuse your OpenAI key, or for local Ollama"
+                    type="password"
+                    fullWidth
+                    sx={fieldStyle}
+                  />
+
+                  <Typography variant="subtitle2" color={symbioColors.teal.glow} sx={{ mt: 1 }}>
+                    ☁️ Cloud Memory Sync (optional)
+                  </Typography>
+                  <Typography variant="caption" color={symbioColors.silver.dark}>
+                    Mirror memories to a Postgres database (e.g. Neon with pgvector) so they survive in the
+                    cloud and can be shared with a Hermes agent. Your local SQLite stays the source of truth.
+                  </Typography>
+                  <TextField
+                    label="Postgres URL"
+                    value={config.memoryPgUrl}
+                    onChange={(e) => updateConfig("memoryPgUrl", e.target.value)}
+                    placeholder="postgresql://user:pass@host/db?sslmode=require"
+                    type="password"
+                    fullWidth
+                    sx={fieldStyle}
+                  />
+
+                  <Typography variant="subtitle2" color={symbioColors.teal.glow} sx={{ mt: 1 }}>
+                    📝 Summary Writer (optional)
+                  </Typography>
+                  <Typography variant="caption" color={symbioColors.silver.dark}>
+                    Leave blank to let your companion write its own memory summaries (most authentic).
+                    Or set a small/cheap model here to save cost — it becomes the worker, your main model the fallback.
+                  </Typography>
+                  <TextField
+                    label="Summary Model"
+                    value={config.summaryModel}
+                    onChange={(e) => updateConfig("summaryModel", e.target.value)}
+                    placeholder="e.g. gpt-4o-mini, llama3.2:3b (blank = your companion writes them)"
+                    fullWidth
+                    sx={fieldStyle}
+                  />
+                  <Typography variant="caption" color={symbioColors.silver.dark}>
+                    Optional: if your summary model is on a different provider than your main
+                    gateway, give it its own endpoint + key. Leave blank to use your main gateway.
+                  </Typography>
+                  <TextField
+                    label="Summary API URL (optional)"
+                    value={config.summaryApiUrl}
+                    onChange={(e) => updateConfig("summaryApiUrl", e.target.value)}
+                    placeholder="e.g. http://localhost:11434 (Ollama) or https://api.openai.com/v1"
+                    fullWidth
+                    sx={fieldStyle}
+                  />
+                  <TextField
+                    label="Summary API Key (optional)"
+                    value={config.summaryApiKey}
+                    onChange={(e) => updateConfig("summaryApiKey", e.target.value)}
+                    placeholder="API key for the summary endpoint (blank = reuse main gateway key)"
+                    type="password"
+                    fullWidth
+                    sx={fieldStyle}
+                  />
+                </Stack>
               )}
 
               <Typography variant="caption" color={symbioColors.silver.dark}>

@@ -233,6 +233,11 @@ interface SymbioAPI {
   onHotMicToggled: (callback: (isActive: boolean) => void) => () => void;
   // STT text received from main process
   onSttText: (callback: (text: string) => void) => () => void;
+  // Tool activity indicators — companion's autonomous actions made visible
+  onToolProgress: (callback: (tc: { id: string; tool: string; label: string; emoji: string; status: "running" | "done" | "error" }) => void) => () => void;
+  onAgentBusy: (callback: (busy: boolean) => void) => () => void;
+  // Streaming partial text — display only (no TTS/animation side effects)
+  onGeneratedTextPartial: (callback: (text: string) => void) => () => void;
   onScreenshot: (callback: (data: {
     image: string;
     height: number;

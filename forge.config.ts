@@ -15,10 +15,20 @@ dotenv.config();
 
 const config: ForgeConfig = {
   packagerConfig: {
+    // We copy sqlite-vec's loadable extension as `native_modules/vec0.node`
+    // (see CopyWebpackPlugin), so AutoUnpackNativesPlugin's `**/*.node`
+    // pattern unpacks it from the asar automatically alongside
+    // better_sqlite3.node. No custom unpack glob needed.
     asar: true,
     executableName: "symbio-basic",
   },
-  rebuildConfig: {},
+  // Native modules are processed by the asset-relocator loader (see
+  // webpack.rules.ts) and unpacked from the asar by the
+  // AutoUnpackNativesPlugin below. We still force a rebuild against Electron's
+  // ABI so prebuilt binaries match the bundled Electron runtime.
+  rebuildConfig: {
+    force: true,
+  },
   makers: [
     new MakerSquirrel({}),
     new MakerZIP({}, ["darwin"]),

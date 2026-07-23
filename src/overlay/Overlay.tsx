@@ -170,6 +170,11 @@ const Overlay = () => {
             setCurrentVrmUrl((runtimeConfig.agentConfig as any).vrmPath);
           }
         }
+        // Keep the TTS provider in sync so the animation-release fallback
+        // can pick the right latency window (Gemini is much slower).
+        if (runtimeConfig.ttsProvider) {
+          config.ttsProvider = runtimeConfig.ttsProvider as string;
+        }
         console.log(`[Symbio] Overlay: Config fetched at startup: agentName=${runtimeConfig.agentName}, displayName=${(runtimeConfig.agentConfig as any)?.displayName}`);
       }
     }).catch((err) => {
@@ -191,6 +196,9 @@ const Overlay = () => {
         if ((update.agentConfig as any).vrmPath) {
           setCurrentVrmUrl((update.agentConfig as any).vrmPath);
         }
+      }
+      if (update.ttsProvider) {
+        config.ttsProvider = update.ttsProvider as string;
       }
       console.log(`[Symbio] Overlay: Config updated from main process: agentName=${update.agentName}`);
     });
@@ -407,11 +415,23 @@ const Overlay = () => {
       // speaking-started/ended events that drive lip sync.
       console.log(`[Symbio] Overlay: sending speak-text via IPC (${text.length} chars)`);
       window.symbioAPI?.speakText?.(text);
-      // Fallback: If speaking-started doesn't arrive within 1.5s,
-      // start lip sync anyway (in case TTS failed or events were lost)
+      // ── Animation-release safety net (provider-aware) ───────────
+      // Animations are held until the REAL `speaking-started` event fires
+      // (when actual audio reaches the speakers), so the mouth + actions
+      // sync to the voice. This timer is ONLY a last-resort fallback for a
+      // total TTS dead-end (both the API and browser TTS produced nothing).
+      //
+      // CRITICAL: it must be LONGER than the provider's audio latency, or it
+      // fires before the voice and you get "mouth moves, no sound, then voice
+      // plays alone" — the classic Gemini desync. Gemini is non-streaming and
+      // downloads the whole clip first (often 2-4s+), so it needs a generous
+      // window. OpenAI streams fast (~0.5s). On success OR genuine failure,
+      // `speaking-started` arrives first and cancels this timer.
+      const provider = (config.ttsProvider || "openai").toLowerCase();
+      const fallbackMs = provider === "gemini" ? 8000 : 4000;
       if (speechFallbackRef.current) clearTimeout(speechFallbackRef.current);
       speechFallbackRef.current = setTimeout(() => {
-        console.log("[Symbio] Overlay: speaking-started fallback — starting lip sync without TTS event");
+        console.log(`[Symbio] Overlay: speaking-started fallback after ${fallbackMs}ms — TTS produced no audio event, releasing animations`);
         setIsSpeaking(true);
         // Mark speech as started so held animations can be released.
         // This fixes the "poof, gone" bug when TTS fails — animations
@@ -424,7 +444,7 @@ const Overlay = () => {
         setTimeout(() => {
           setIsSpeaking(false);
         }, estimatedDuration);
-      }, 1500);
+      }, fallbackMs);
       return undefined; // No URL needed — speech handled by main process
     } catch (error) {
       console.error("[Symbio] Voice error:", error);
@@ -487,6 +507,50 @@ const Overlay = () => {
   // (they can keep working after sending a response, make tool calls, etc.).
   // Non-Hermes gateways (OpenRouter, OpenAI, Ollama) fall back to chat/completions.
   const useHermesRuns = isHermesGateway();
+
+  // ── Tool activity indicators (IPC-driven) ───────────────────────
+  // The main process drives the conversation (memory, tools, voice, vision)
+  // and emits tool-progress + agent-busy events. We mirror them here so the
+  // 🔧 chips and "● thinking" indicator show for EVERY gateway, not just the
+  // (currently unused) Runs transport. This is what makes the companion's
+  // autonomous actions visible to the human.
+  const [toolActivity, setToolActivity] = useState<
+    Array<{ id: string; tool: string; label: string; emoji: string; status: "running" | "done" | "error" }>
+  >([]);
+  const [agentBusy, setAgentBusy] = useState(false);
+  const toolClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const cleanupTool = window.symbioAPI?.onToolProgress?.((tc) => {
+      setToolActivity((prev) => {
+        const idx = prev.findIndex((t) => t.id === tc.id);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = tc;
+          return next;
+        }
+        // Keep the list short (last 4 actions)
+        return [...prev, tc].slice(-4);
+      });
+    });
+
+    const cleanupBusy = window.symbioAPI?.onAgentBusy?.((busy) => {
+      setAgentBusy(busy);
+      if (busy) {
+        if (toolClearTimerRef.current) clearTimeout(toolClearTimerRef.current);
+      } else {
+        // When the turn ends, let the final ✓ chips linger briefly, then clear.
+        if (toolClearTimerRef.current) clearTimeout(toolClearTimerRef.current);
+        toolClearTimerRef.current = setTimeout(() => setToolActivity([]), 2500);
+      }
+    });
+
+    return () => {
+      cleanupTool?.();
+      cleanupBusy?.();
+      if (toolClearTimerRef.current) clearTimeout(toolClearTimerRef.current);
+    };
+  }, []);
 
   // Standard chat transport (for non-Hermes gateways)
   const hermesTransport = useMemo(() => new HermesTransport(), []);
@@ -619,7 +683,17 @@ const Overlay = () => {
       getVoiceAudio(text);
     });
 
-    return () => cleanupText?.();
+    // Streaming partials — update the visible response text ONLY. No TTS, no
+    // animation parsing here (those happen once on the final generated-text),
+    // so streaming doesn't fire dozens of competing speech calls.
+    const cleanupPartial = window.symbioAPI?.onGeneratedTextPartial?.((text: string) => {
+      setRecentResponse(text);
+    });
+
+    return () => {
+      cleanupText?.();
+      cleanupPartial?.();
+    };
   }, [getVoiceAudio]);
 
   useEffect(() => {
@@ -688,8 +762,10 @@ const Overlay = () => {
           </span>
         </div>
       )}
-      {/* Tool call indicator — shows when the agent is using tools (Runs transport) */}
-      {useHermesRuns && activeToolCalls.length > 0 && (
+      {/* Tool call indicator — shows when the companion is using tools.
+          Driven by IPC tool-progress events from the main process, so it
+          works for every gateway. */}
+      {toolActivity.length > 0 && (
         <div style={{
           position: "absolute",
           bottom: 10,
@@ -702,22 +778,23 @@ const Overlay = () => {
           opacity: 0.7,
           transition: "opacity 0.3s",
         }}>
-          {activeToolCalls.map((tc, i) => (
-            <span key={i} style={{
-              color: tc.status === "running" ? "#ffab00" : "#4caf50",
+          {toolActivity.map((tc, i) => (
+            <span key={tc.id || i} style={{
+              color: tc.status === "running" ? "#ffab00" : tc.status === "error" ? "#ff5252" : "#4caf50",
               fontSize: 10,
               fontFamily: '"Inter", "Roboto", sans-serif',
               textShadow: "0 0 4px rgba(0,0,0,0.5)",
               letterSpacing: "0.03em",
             }}>
               {tc.emoji ? `${tc.emoji} ` : "🔧 "}{tc.label}
-              {tc.status === "running" ? "..." : " ✓"}
+              {tc.status === "running" ? "..." : tc.status === "error" ? " ✗" : " ✓"}
             </span>
           ))}
         </div>
       )}
-      {/* Agent running indicator — shows when the agent is actively working */}
-      {useHermesRuns && isAgentRunning && (
+      {/* Agent running indicator — shows when the companion is actively
+          working. Driven by the agent-busy IPC event (every gateway). */}
+      {agentBusy && (
         <div style={{
           position: "absolute",
           top: 10,

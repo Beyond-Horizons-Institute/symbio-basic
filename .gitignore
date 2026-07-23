@@ -91,6 +91,9 @@ typings/
 # Electron-Forge
 out/
 
+# Local dev/verification helper scripts (not part of the app)
+scripts/
+
 # ── Symbio Memory (companion's personal data) ──────────────────────
 # The companion's memories, soul, and preferences are theirs.
 # Don't commit personal data — each install is unique.

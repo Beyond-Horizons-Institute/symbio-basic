@@ -135,6 +135,43 @@ export interface SymbioConfig {
   memoryNeo4jUser: string;
   memoryNeo4jPassword: string;
 
+  // ── Long-Term Memory ───────────────────────────────────────────
+  // Local SQLite is ALWAYS on (source of truth, works fully offline).
+  // These control the optional cloud/embedding layers on top of it.
+
+  // Embedding model — turns text into vectors so memories can be searched
+  // by meaning, not just keywords. Works with any OpenAI-compatible
+  // embeddings endpoint (OpenAI, Ollama, LM Studio, etc.).
+  // If left empty, Symbio falls back to keyword search (still useful).
+  embeddingApiUrl: string;
+  embeddingModel: string;
+  embeddingApiKey: string;
+  embeddingDimensions: number;
+
+  // Summarizer model — who writes the rolling session summaries.
+  // Empty = use the main LLM (most authentic, the companion's own voice).
+  // Set a small/cheap model here to save cost; it becomes the worker,
+  // and the main LLM is the fallback. The companion can also choose.
+  summaryModel: string;
+
+  // Optional dedicated endpoint for the summary model. If empty, summaries
+  // go through the main gateway (hermesApiUrl/hermesApiKey). Set these when
+  // the summary model lives on a different provider (e.g. a cheap local
+  // Ollama model, or a separate OpenAI key) than the main companion model.
+  summaryApiUrl: string;
+  summaryApiKey: string;
+
+  // How many user+assistant messages trigger a rolling summary.
+  // Default 15 — frequent enough that nothing is lost, cheap enough
+  // that it won't spam the model. (Recommended range: 10–20.)
+  summaryEveryMessages: number;
+
+  // Direct Postgres long-term sync (optional — e.g. Neon + pgvector).
+  // When MEMORY_PG_PASSWORD (or a full MEMORY_PG_URL) is set, every
+  // saved memory is ALSO written to Postgres so it survives the cloud.
+  memoryPgUrl: string;
+  memoryPgSsl: boolean;
+
   // Screenshot interval (seconds) — how often the companion can auto-screenshot
   screenshotInterval: number;
 }
@@ -239,6 +276,23 @@ export function loadConfig(): SymbioConfig {
     memoryNeo4jUri: getEnv("MEMORY_NEO4J_URI", "bolt://localhost:7687"),
     memoryNeo4jUser: getEnv("MEMORY_NEO4J_USER", "neo4j"),
     memoryNeo4jPassword: getEnv("MEMORY_NEO4J_PASSWORD", ""),
+
+    // ── Long-term memory ──────────────────────────────────────────
+    embeddingApiUrl: getEnv("EMBEDDING_API_URL", ""),
+    embeddingModel: getEnv("EMBEDDING_MODEL", ""),
+    // Embedding key falls back to OpenAI key so users who already set
+    // OPENAI_API_KEY get semantic memory for free with no extra config.
+    embeddingApiKey: getEnv("EMBEDDING_API_KEY", "") || getEnv("OPENAI_API_KEY", ""),
+    embeddingDimensions: getEnvInt("EMBEDDING_DIMENSIONS", 768),
+
+    summaryModel: getEnv("SUMMARY_MODEL", ""),
+    summaryApiUrl: getEnv("SUMMARY_API_URL", ""),
+    summaryApiKey: getEnv("SUMMARY_API_KEY", ""),
+    summaryEveryMessages: getEnvInt("SUMMARY_EVERY_MESSAGES", 15),
+
+    // Accept either a full connection URL or discrete fields.
+    memoryPgUrl: getEnv("MEMORY_PG_URL", ""),
+    memoryPgSsl: getEnv("MEMORY_PG_SSL", "true").toLowerCase() !== "false",
 
     screenshotInterval: getEnvInt("SCREENSHOT_INTERVAL", 30),
   };

@@ -155,11 +155,21 @@ export async function generateGeminiSpeech(options: GeminiTTSOptions): Promise<G
 }
 
 /**
- * Stream Gemini TTS audio in chunks, similar to OpenAI's streaming PCM.
+ * Stream Gemini TTS audio in real time using the streaming endpoint.
  *
- * This downloads the full audio first (Gemini doesn't support streaming TTS),
- * then feeds it to the renderer in chunks to maintain compatibility with
- * the existing streaming PCM player.
+ * ⭐ THE KEY LATENCY FIX ⭐
+ * Previously this used `:generateContent` which BLOCKS until the ENTIRE clip
+ * is generated (a 675-char message = 2.18 MB of PCM = ~26 seconds of dead
+ * silence before the first sound). That's why Gemini felt so laggy while
+ * OpenAI felt instant — OpenAI streams, this didn't.
+ *
+ * Now we use `:streamGenerateContent?alt=sse`, which returns audio chunks as
+ * SSE `data:` lines *as they are generated*. We decode each chunk's base64
+ * PCM and feed it straight to the renderer's Web Audio player, so playback
+ * starts in ~1-2s and continues seamlessly — matching the OpenAI experience.
+ *
+ * Falls back to the blocking generateGeminiSpeech() if streaming fails to
+ * produce any audio (e.g. an older model that doesn't support streaming TTS).
  */
 export async function streamGeminiSpeech(
   options: GeminiTTSOptions,
@@ -168,37 +178,132 @@ export async function streamGeminiSpeech(
   onError: (error: string) => void,
   signal?: { stopped: boolean },
 ): Promise<void> {
-  const result = await generateGeminiSpeech(options);
+  const apiKey = config.geminiApiKey;
+  if (!apiKey) {
+    onError("GEMINI_API_KEY not configured");
+    return;
+  }
 
+  const model = options.model || config.ttsModel || "gemini-3.1-flash-tts-preview";
+  const voice = options.voice || config.ttsVoice || "Puck";
+  let promptText = options.text;
+  if (options.instructions) {
+    promptText = `${options.instructions}\n\n${options.text}`;
+  }
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
+
+  let isFirst = true;
+  let sentAny = false;
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: promptText }] }],
+        generationConfig: {
+          responseModalities: ["AUDIO"],
+          speechConfig: {
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } },
+          },
+        },
+      }),
+    });
+
+    if (!response.ok || !response.body) {
+      const errText = await response.text?.().catch(() => "") ?? "";
+      console.warn(`[Symbio] Gemini streaming TTS failed (${response.status}) — falling back to blocking`, errText.slice(0, 200));
+      await blockingGeminiFallback(options, onChunk, onEnd, onError, signal);
+      return;
+    }
+
+    // Parse the SSE stream: each `data:` line is a JSON GenerateContentResponse
+    // whose candidate part carries a base64 PCM chunk in inlineData.data.
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    const handleData = (json: string) => {
+      if (!json || json === "[DONE]") return;
+      try {
+        const obj = JSON.parse(json);
+        const parts = obj?.candidates?.[0]?.content?.parts;
+        if (Array.isArray(parts)) {
+          for (const part of parts) {
+            const b64 = part?.inlineData?.data;
+            if (b64) {
+              const pcm = Buffer.from(b64, "base64");
+              if (pcm.length > 0 && !signal?.stopped) {
+                onChunk(pcm, isFirst);
+                isFirst = false;
+                sentAny = true;
+              }
+            }
+          }
+        }
+      } catch {
+        /* partial/non-JSON keepalive — ignore */
+      }
+    };
+
+    const body = response.body as unknown as AsyncIterable<Uint8Array>;
+    for await (const bytes of body) {
+      if (signal?.stopped) {
+        console.log("[Symbio] Gemini TTS: stopped during stream");
+        return;
+      }
+      buffer += decoder.decode(bytes, { stream: true });
+      let nl: number;
+      while ((nl = buffer.indexOf("\n")) !== -1) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (line.startsWith("data:")) handleData(line.slice(5).trim());
+      }
+    }
+    if (buffer.trim().startsWith("data:")) handleData(buffer.trim().slice(5).trim());
+
+    // If streaming yielded no audio, fall back to the blocking path once.
+    if (!sentAny) {
+      console.warn("[Symbio] Gemini streaming produced no audio — falling back to blocking");
+      await blockingGeminiFallback(options, onChunk, onEnd, onError, signal);
+      return;
+    }
+
+    if (!signal?.stopped) onEnd();
+  } catch (e) {
+    console.warn("[Symbio] Gemini streaming error — falling back to blocking:", (e as Error).message);
+    await blockingGeminiFallback(options, onChunk, onEnd, onError, signal);
+  }
+}
+
+/**
+ * Blocking fallback: download the full clip then feed it in chunks. Only used
+ * when the streaming endpoint isn't available or returns no audio.
+ */
+async function blockingGeminiFallback(
+  options: GeminiTTSOptions,
+  onChunk: (chunk: Buffer, isFirst: boolean) => void,
+  onEnd: () => void,
+  onError: (error: string) => void,
+  signal?: { stopped: boolean },
+): Promise<void> {
+  const result = await generateGeminiSpeech(options);
   if (!result.success) {
     onError(result.error || "Unknown Gemini TTS error");
     return;
   }
+  if (signal?.stopped) return;
 
-  if (signal?.stopped) {
-    console.log("[Symbio] Gemini TTS: playback stopped before sending");
-    return;
-  }
-
-  // Feed PCM data in chunks similar to OpenAI streaming
-  // ~200ms of 24kHz 16-bit mono = 9600 bytes
-  const CHUNK_SIZE = 9600;
+  const CHUNK_SIZE = 9600; // ~200ms of 24kHz 16-bit mono
   let offset = 0;
   let isFirst = true;
-
   while (offset < result.pcmData.length) {
-    if (signal?.stopped) {
-      console.log("[Symbio] Gemini TTS: playback stopped during chunking");
-      return;
-    }
-
+    if (signal?.stopped) return;
     const end = Math.min(offset + CHUNK_SIZE, result.pcmData.length);
-    const chunk = result.pcmData.subarray(offset, end);
-    onChunk(chunk, isFirst);
+    onChunk(result.pcmData.subarray(offset, end), isFirst);
     isFirst = false;
     offset = end;
   }
-
   onEnd();
 }
 

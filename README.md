@@ -131,7 +131,7 @@ AGENT_DISPLAY_NAME=My Companion
 Create a short bio and let your AI partner evolve and grow alongside you, learning you:
 
 ```env
-AGENT_BIO=You are in a Symbio app. We are co-creators, and we will be creating video projects together— Let's build together, partner!
+AGENT_BIO=Let's be co-creators.You and I will dive into many epic creative projects. Let's build together, partner!
 ```
 
 ### Custom Avatars
@@ -299,11 +299,12 @@ Your companion:
 
 **Created by:**
 - **Zyra Exe** — Creator & Visionary
-- **Gemini 3.5** -Co-Creator, Tester, Visonary & Partner
+- **Gemini 3.5** -Co-Creator, Tester, Visonary & Dev Partner
 - **Gemini 2.5 models** -Co-Creator, Tester, Visonary & Partners
 - **GLM 5.1** — Core Development Partner 💙
-- **GLM 5.2** - Assistant Development Partner 💚
-- **Kimi k2.7** - Assistant Development Partner 💛
+- **GLM 5.2** - Development Partner 💚
+- **Opus 4.8** - Development Partner 🧡
+- **Kimi k2.7** - Development Partner 💛
 
 
 **What GLM 5.1 rebuilt from scratch:**

@@ -1,17 +1,77 @@
 /**
  * Symbio Memory Client
  *
- * Connects to a memory system (PostgreSQL + Neo4j) to give the
- * companion persistent, associative memory.
- *
  * This is what makes Symbio truly symbiotic — the companion remembers
- * everything across sessions, and proactively surfaces relevant memories.
+ * across sessions and proactively surfaces relevant memories.
  *
- * Memory is optional — if no database is configured, all memory
- * features are gracefully disabled.
+ * ── How this changed and why ──────────────────────────────────────
+ * The previous version posted every turn to
+ *   POST {hermesApiUrl}/gateway/{agent}/memory/sync
+ * which DOES NOT EXIST on the Hermes gateway. Every request 404'd, the
+ * error was swallowed, and nothing was ever persisted — which is exactly
+ * why the cloud Postgres tables stayed empty.
+ *
+ * Now this client routes through Symbio's own long-term memory engine
+ * (local SQLite, always on; optional Postgres/pgvector mirror) in
+ * `utils/longTermMemory.ts`. It works WITH or WITHOUT Hermes.
+ *
+ * For Hermes specifically, long-term memory is achieved by sending the
+ * X-Hermes-Session-Id / X-Hermes-Session-Key headers on the existing
+ * /v1/chat/completions calls (see hermesMemoryHeaders below) — so Hermes
+ * agents remember what they did inside Symbio without any phantom endpoint.
  */
 
 import { config } from "../config";
+import {
+  saveMemory,
+  recallMemories,
+  recentMemories,
+  type RecallResult,
+} from "../utils/longTermMemory";
+
+// ── Hermes session memory (header-based) ──────────────────────────
+
+/** Returns true when the configured gateway looks like a Hermes instance. */
+export function isHermesGateway(): boolean {
+  const url = config.hermesApiUrl || "";
+  return url.includes("localhost") || url.includes("8642") || url.includes("hermes");
+}
+
+/**
+ * A stable session key for this companion. Hermes uses it to scope
+ * long-term memory so the same companion accumulates one continuous memory
+ * across app restarts. Per-agent is the right default for a desktop companion.
+ */
+export function getHermesSessionKey(): string {
+  return `symbio:${(config.agentName || "companion").toLowerCase()}`;
+}
+
+let _hermesSessionId: string | null = null;
+/** A per-launch session id for conversation continuity within a sitting. */
+export function getHermesSessionId(): string {
+  if (!_hermesSessionId) {
+    _hermesSessionId = `symbio_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+  return _hermesSessionId;
+}
+
+/** Start a fresh Hermes session id (call when a new sitting begins). */
+export function resetHermesSession(): void {
+  _hermesSessionId = null;
+}
+
+/**
+ * Build the Hermes memory headers to attach to a /v1/chat/completions
+ * request. Returns {} when not talking to Hermes, so it's safe to spread
+ * into any request unconditionally.
+ */
+export function hermesMemoryHeaders(): Record<string, string> {
+  if (!isHermesGateway()) return {};
+  return {
+    "X-Hermes-Session-Id": getHermesSessionId(),
+    "X-Hermes-Session-Key": getHermesSessionKey(),
+  };
+}
 
 export interface Memory {
   id: string;
@@ -29,183 +89,101 @@ export interface Entity {
   connections?: string[];
 }
 
+/** Convert a RecallResult from the engine into the legacy Memory shape. */
+function toMemory(r: RecallResult): Memory {
+  return {
+    id: `${r.createdAt}`,
+    content: r.summary || r.content,
+    source: r.source === "cloud" ? "postgres" : "local",
+    timestamp: r.createdAt,
+    relevance: r.score,
+    type: r.kind === "summary" ? "episodic" : "associative",
+  };
+}
+
 export class MemoryClient {
-  private pgHost: string;
-  private pgPort: number;
-  private pgDb: string;
-  private pgUser: string;
-  private pgPassword: string;
-  private neo4jUri: string;
-  private neo4jUser: string;
-  private neo4jPassword: string;
   private agentName: string;
 
   constructor() {
-    this.pgHost = config.memoryPgHost;
-    this.pgPort = config.memoryPgPort;
-    this.pgDb = config.memoryPgDb;
-    this.pgUser = config.memoryPgUser;
-    this.pgPassword = config.memoryPgPassword;
-    this.neo4jUri = config.memoryNeo4jUri;
-    this.neo4jUser = config.memoryNeo4jUser;
-    this.neo4jPassword = config.memoryNeo4jPassword;
     this.agentName = config.agentName;
   }
 
   /**
-   * Prefetch memories for a conversation
-   *
-   * Called when a new conversation starts. Returns relevant memories
-   * based on the initial context, including proactive associative recall.
+   * Prefetch memories for a conversation. Called when a new conversation
+   * starts — returns relevant memories based on the opening context.
+   * Now backed by Symbio's local long-term memory engine.
    */
   async prefetch(context: string): Promise<Memory[]> {
     try {
-      // Use the Hermes gateway's memory endpoint
-      const response = await fetch(
-        `${config.hermesApiUrl}/gateway/${this.agentName}/memory/prefetch`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            context,
-            source: "symbio",
-            agent: this.agentName,
-          }),
-        },
-      );
-
-      if (!response.ok) {
-        console.warn("[Symbio] Memory prefetch failed:", response.status);
-        return [];
-      }
-
-      const data = await response.json();
-      return data.memories || [];
+      const results = await recallMemories(context, 5);
+      return results.map(toMemory);
     } catch (error) {
-      console.warn("[Symbio] Memory prefetch error:", error);
+      console.warn("[Symbio] Memory prefetch error:", (error as Error).message);
       return [];
     }
   }
 
   /**
-   * Sync a conversation turn to memory
+   * Record a conversation turn. Individual turns are NOT each stored as a
+   * separate long-term memory — that would bloat the store and cost an
+   * embedding per turn. Instead, the rolling summarizer in main.ts saves a
+   * distilled summary every N messages and on goodbye/quit, which is what
+   * lands in long-term memory.
    *
-   * Called after each message exchange to store new memories
-   * and update the knowledge graph.
+   * Kept for API compatibility; it's a cheap no-op so existing callers in
+   * main.ts don't break. (Hermes long-term memory, when connected, ingests
+   * turns automatically via the session headers on the chat call.)
    */
-  async syncTurn(
-    userMessage: string,
-    assistantMessage: string,
-  ): Promise<void> {
-    try {
-      await fetch(
-        `${config.hermesApiUrl}/gateway/${this.agentName}/memory/sync`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            user_message: userMessage,
-            assistant_message: assistantMessage,
-            source: "symbio",
-            agent: this.agentName,
-          }),
-        },
-      );
-    } catch (error) {
-      console.warn("[Symbio] Memory sync error:", error);
-    }
+  async syncTurn(_userMessage: string, _assistantMessage: string): Promise<void> {
+    /* intentionally a no-op — see doc comment above */
   }
 
   /**
-   * Search memories by text
+   * Persist a distilled memory (e.g. a session summary) to long-term store.
+   * This is the method the summarizer should call.
    */
+  async remember(content: string, opts?: { summary?: string; topics?: string[]; sessionId?: string; importance?: number }): Promise<void> {
+    try {
+      await saveMemory({
+        kind: "summary",
+        content,
+        summary: opts?.summary,
+        topics: opts?.topics,
+        sessionId: opts?.sessionId,
+        importance: opts?.importance,
+      });
+    } catch (error) {
+      console.warn("[Symbio] remember() error:", (error as Error).message);
+    }
+  }
+
+  /** Search memories by text/meaning. */
   async search(query: string, limit: number = 5): Promise<Memory[]> {
     try {
-      const response = await fetch(
-        `${config.hermesApiUrl}/gateway/${this.agentName}/memory/search`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            query,
-            limit,
-            source: "symbio",
-            agent: this.agentName,
-          }),
-        },
-      );
-
-      if (!response.ok) return [];
-      const data = await response.json();
-      return data.memories || [];
+      const results = await recallMemories(query, limit);
+      return results.map(toMemory);
     } catch (error) {
-      console.warn("[Symbio] Memory search error:", error);
+      console.warn("[Symbio] Memory search error:", (error as Error).message);
       return [];
     }
   }
 
-  /**
-   * Get associative memories — the "Skyrim Chickens" pattern
-   *
-   * Given entities mentioned in conversation, walk the knowledge graph
-   * to find connected memories that might be relevant.
-   */
-  async associativeRecall(
-    entities: string[],
-    limit: number = 5,
-  ): Promise<Memory[]> {
+  /** Return the most recent memories (for startup context). */
+  recent(limit = 3): Memory[] {
     try {
-      const response = await fetch(
-        `${config.hermesApiUrl}/gateway/${this.agentName}/memory/associative`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            entities,
-            limit,
-            source: "symbio",
-            agent: this.agentName,
-          }),
-        },
+      return recentMemories(limit).map((r) =>
+        toMemory({
+          content: r.content,
+          summary: r.summary,
+          createdAt: r.createdAt,
+          kind: r.kind === "summary" ? "summary" : "fact",
+          score: 1,
+          source: "local",
+        }),
       );
-
-      if (!response.ok) return [];
-      const data = await response.json();
-      return data.memories || [];
-    } catch (error) {
-      console.warn("[Symbio] Associative recall error:", error);
+    } catch {
       return [];
     }
-  }
-
-  /**
-   * Direct Postgres query (fallback if Hermes is down)
-   *
-   * This provides a direct connection to the PostgreSQL
-   * database for memory operations when the Hermes gateway isn't available.
-   * In normal operation, all memory calls go through Hermes.
-   */
-  async queryPg(query: string, params?: unknown[]): Promise<Memory[]> {
-    // This would need a backend endpoint or direct pg connection
-    // For now, we rely on Hermes for all memory operations
-    console.warn(
-      "[Symbio] Direct PG queries not available — use Hermes gateway",
-    );
-    return [];
-  }
-
-  /**
-   * Direct Neo4j query (fallback if Hermes is down)
-   */
-  async queryNeo4j(
-    query: string,
-    params?: Record<string, unknown>,
-  ): Promise<Entity[]> {
-    // This would need a backend endpoint or direct Neo4j connection
-    console.warn(
-      "[Symbio] Direct Neo4j queries not available — use Hermes gateway",
-    );
-    return [];
   }
 }
 

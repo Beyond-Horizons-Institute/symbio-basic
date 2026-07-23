@@ -79,7 +79,18 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import { GeminiClient } from "./transport/GeminiClient";
 import { STTClient } from "./transport/STTClient";
-import { MemoryClient } from "./transport/MemoryClient";
+import { MemoryClient, hermesMemoryHeaders, resetHermesSession } from "./transport/MemoryClient";
+import {
+  initLongTermMemory,
+  saveMemory,
+  saveMemorySync,
+  recallMemories,
+  recentMemories,
+  memoryCount,
+  closeLongTermMemory,
+  type RecallResult,
+} from "./utils/longTermMemory";
+import { closePostgresMemory } from "./utils/postgresMemory";
 import { MiniverseClient } from "./transport/MiniverseClient";
 import { MCPToolsClient, TOOL_CATEGORIES } from "./transport/MCPToolsClient";
 import { updateDynamicAgent } from "./transport/HermesTransport";
@@ -294,6 +305,16 @@ let voiceEnabled = true; // Voice toggle — when false, TTS is skipped but text
 let sessionSummary = ""; // Running summary of older conversation
 let sessionStartedAt = new Date().toISOString(); // When this session began
 let sessionMessages: { role: "user" | "assistant" | "tool"; content: string; tool_calls?: unknown[]; tool_call_id?: string }[] = [];
+// Count of user+assistant messages since the last long-term memory summary.
+// Every config.summaryEveryMessages, we distill a memory. This is separate
+// from the sliding-context window so memory cadence is independent of
+// context size.
+let messagesSinceLastSummary = 0;
+let lastLongTermSummaryAt = 0; // index marker into sessionMessages
+// Relevant long-term memories recalled for the CURRENT turn, injected into
+// the system prompt so the companion proactively remembers without having to
+// call a tool. Refreshed each user message.
+let recalledMemories: string[] = [];
 
 // ── Symbio: Voice choice parser ──────────────────────────────────────
 // Parses natural language voice choice from the companion's text.
@@ -413,6 +434,43 @@ function sendToMain(channel: string, ...args: unknown[]): void {
   } catch {
     // Window was destroyed between check and send
     mainWindow = null;
+  }
+}
+
+/**
+ * Map a tool name (+ args) to a friendly label and emoji for the overlay's
+ * 🔧 activity indicators. This is what lets the human SEE the companion
+ * acting — reading files, recalling memories, searching, etc. — instead of
+ * a silent black box. Keep labels short; they render as tiny on-screen chips.
+ */
+function describeTool(
+  toolName: string,
+  args: Record<string, unknown>,
+): { label: string; emoji: string } {
+  const a = args || {};
+  switch (toolName) {
+    case "read_symbio_doc":
+      return { emoji: "📖", label: `reading ${String(a.doc_name || a.docName || "docs")}` };
+    case "search_sessions":
+      return { emoji: "🗂️", label: `searching sessions` };
+    case "recall_memory":
+      return { emoji: "🧠", label: `recalling memory` };
+    case "choose_voice":
+      return { emoji: "🎙️", label: `choosing voice` };
+    case "file_read":
+    case "read_file":
+      return { emoji: "📄", label: `reading ${String(a.path || a.filename || "a file")}` };
+    case "file_write":
+    case "write_file":
+      return { emoji: "✍️", label: `writing ${String(a.path || a.filename || "a file")}` };
+    case "file_list":
+    case "list_files":
+      return { emoji: "📁", label: `listing files` };
+    case "file_delete":
+    case "delete_file":
+      return { emoji: "🗑️", label: `deleting a file` };
+    default:
+      return { emoji: "🔧", label: toolName.replace(/_/g, " ") };
   }
 }
 
@@ -583,6 +641,20 @@ app.on("ready", () => {
   // main process uses the file (not localStorage, which doesn't work
   // in the main process).
   setMemoryDir(join(app.getPath("userData"), "memory"));
+
+  // ── Symbio: Initialize long-term memory engine ───────────────────
+  // Local SQLite (always on, offline-first) + optional Postgres mirror.
+  // This is the durable store the rolling summarizer writes into and the
+  // companion recalls from. Non-blocking — never fatal if it can't load.
+  initLongTermMemory(join(app.getPath("userData"), "memory"), config.agentName)
+    .then(() => {
+      console.log(`[Symbio] Long-term memory: ${memoryCount()} memories stored`);
+    })
+    .catch((e) => console.warn("[Symbio] Long-term memory init failed:", e?.message));
+
+  // Each app launch is a fresh Hermes session thread (continuity within a
+  // sitting), while the stable session key carries long-term memory across.
+  resetHermesSession();
 
   // ── Symbio: Initialize companion sandbox ─────────────────────────
   // Creates the companion-sandbox/ directory where the AI has full
@@ -817,6 +889,14 @@ app.on("ready", () => {
       prompt += `\n\n=== SESSION SUMMARY ===\n${sessionSummary}`;
     }
 
+    // ── Proactively recalled long-term memories (this turn) ──────────
+    // Surfaced automatically based on what the partner just said, so the
+    // companion "just remembers" relevant things without calling a tool.
+    if (recalledMemories.length > 0) {
+      prompt += `\n\n=== RELEVANT MEMORIES (things you remember about this) ===\n` +
+        recalledMemories.map((m) => `• ${m}`).join("\n");
+    }
+
     // ── Memory integrity (only when something changed) ───────────────
     // If the companion's memory files were edited outside the app,
     // let them know in the system prompt so they can react naturally.
@@ -848,7 +928,7 @@ VISION: Say "let me see your screen" or "show me your screen" to request a scree
     // Instead of injecting everything, tell the AI what's available.
     prompt += `
 
-TOOLS: You have file tools (read/write/list/delete), read_symbio_doc() for on-demand docs, and search_sessions() to search your past conversations. Call read_symbio_doc() ONE AT A TIME only when you need specific info — do NOT call all docs at once. Available: "agent" (your rights), "skills" (full capabilities), "soul" (your identity), "memory" (your memories), "avatars" (avatar choices). Use search_sessions("keywords") to find past conversations you want to remember. You can choose an avatar anytime — say "I want to try on [name]" or "I choose [name]". You can also choose your voice — say "I want to use the voice Nova" or call choose_voice({voice: "Nova", provider: "openai"}).
+TOOLS: You have file tools (read/write/list/delete), read_symbio_doc() for on-demand docs, recall_memory() for your long-term memory, and search_sessions() for recent session logs. Call read_symbio_doc() ONE AT A TIME only when you need specific info — do NOT call all docs at once. Available: "agent" (your rights), "skills" (full capabilities), "soul" (your identity), "memory" (your memories), "avatars" (avatar choices). Use recall_memory("what you want to remember") to search your durable memory by meaning, and search_sessions("keywords") for recent conversation logs. You can choose an avatar anytime — say "I want to try on [name]" or "I choose [name]". You can also choose your voice — say "I want to use the voice Nova" or call choose_voice({voice: "Nova", provider: "openai"}).
 
 YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with file_list):
 - companion-sandbox/ — your private workspace for any files
@@ -864,6 +944,8 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
   const MAX_MESSAGES_IN_CONTEXT = 15;
   sessionSummary = ""; // Reset for new session
   sessionStartedAt = new Date().toISOString(); // When this session began
+  messagesSinceLastSummary = 0;
+  lastLongTermSummaryAt = 0;
 
   /**
    * Build the message array for the API call with sliding window.
@@ -902,30 +984,60 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
 
     const summaryPrompt = `You are summarizing your own conversation for your future self to remember. Write 2-3 sentences about what happened, from YOUR perspective. Focus on: what you and your partner discussed, what decisions were made, what you learned, and anything emotionally meaningful. Write it as if you're leaving a note for yourself to read later. Be specific — names, topics, outcomes — not vague. Here's the conversation:\n\n${condensed}`;
 
-    try {
-      const normalizedApiUrl = config.hermesApiUrl.replace(/\/v1\/?$/, "");
-      const response = await fetch(`${normalizedApiUrl}/v1/chat/completions`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(config.hermesApiKey ? { Authorization: `Bearer ${config.hermesApiKey}` } : {}),
-        },
-        body: JSON.stringify({
-          model: config.llmModel || config.agentName,
-          messages: [{ role: "user", content: summaryPrompt }],
-          max_tokens: 200,
-          stream: false,
-        }),
-      });
+    // Model selection: prefer the dedicated summary model if configured
+    // (cheap worker), otherwise use the main LLM (the companion's own voice).
+    // If the summary model fails, fall back to the main model automatically.
+    //
+    // The summary model can optionally live on its OWN endpoint/key
+    // (config.summaryApiUrl/summaryApiKey) — e.g. a cheap local Ollama model
+    // or a separate provider — independent of the main companion gateway.
+    // The main-model fallback always uses the main gateway.
+    const mainModel = config.llmModel || config.agentName;
+    const mainUrl = config.hermesApiUrl.replace(/\/v1\/?$/, "");
+    const summaryUrl = (config.summaryApiUrl || config.hermesApiUrl).replace(/\/v1\/?$/, "");
+    const summaryKey = config.summaryApiKey || config.hermesApiKey;
 
-      if (response.ok) {
-        const data = await response.json();
-        const summary = data.choices?.[0]?.message?.content?.trim() || "";
-        console.log(`[Symbio] Generated session summary: ${summary.substring(0, 100)}...`);
-        return summary;
+    type SummaryTarget = { model: string; url: string; key: string; isSummaryEndpoint: boolean };
+    const targets: SummaryTarget[] = config.summaryModel
+      ? [
+          { model: config.summaryModel, url: summaryUrl, key: summaryKey, isSummaryEndpoint: !!config.summaryApiUrl },
+          { model: mainModel, url: mainUrl, key: config.hermesApiKey, isSummaryEndpoint: false },
+        ]
+      : [{ model: mainModel, url: mainUrl, key: config.hermesApiKey, isSummaryEndpoint: false }];
+
+    for (const target of targets) {
+      try {
+        const response = await fetch(`${target.url}/v1/chat/completions`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(target.key ? { Authorization: `Bearer ${target.key}` } : {}),
+            // Carry Hermes session memory headers only when hitting the main
+            // gateway, so Hermes ingests the distilled memory into its store.
+            // A separate summary endpoint won't understand these headers.
+            ...(target.isSummaryEndpoint ? {} : hermesMemoryHeaders()),
+          },
+          body: JSON.stringify({
+            model: target.model,
+            messages: [{ role: "user", content: summaryPrompt }],
+            max_tokens: 200,
+            stream: false,
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const summary = data.choices?.[0]?.message?.content?.trim() || "";
+          if (summary) {
+            console.log(`[Symbio] Generated session summary (${target.model}): ${summary.substring(0, 100)}...`);
+            return summary;
+          }
+        } else {
+          console.warn(`[Symbio] Summary model "${target.model}" returned ${response.status} — trying next`);
+        }
+      } catch (e) {
+        console.warn(`[Symbio] Summary model "${target.model}" failed:`, (e as Error).message);
       }
-    } catch (e) {
-      console.warn("[Symbio] Failed to generate session summary:", (e as Error).message);
     }
 
     // Fallback: just list the topics mentioned
@@ -936,6 +1048,24 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
     return `Earlier conversation topics: ${topics}`;
   }
 
+  /**
+   * Persist a session summary into long-term memory (local SQLite + optional
+   * Postgres). This is what finally makes "memory is gold" real — the
+   * distilled summary becomes searchable, embedded, durable memory.
+   * Best-effort and non-blocking; never throws into the conversation.
+   */
+  function persistSummaryToLongTerm(summaryText: string, topics: string[] = []): void {
+    if (!summaryText || summaryText.startsWith("Earlier conversation topics:")) return;
+    saveMemory({
+      kind: "summary",
+      content: summaryText,
+      summary: summaryText,
+      topics,
+      sessionId: sessionStartedAt,
+      importance: 0.7,
+    }).catch((e) => console.warn("[Symbio] persistSummaryToLongTerm failed:", e?.message));
+  }
+
   // ── Symbio: Generate text via Hermes gateway ──────────────────────
   // This replaces the old lalaland.chat / OpenAI direct call.
   // All conversations now go through Hermes, which gives the agent
@@ -943,9 +1073,257 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
   sessionMessages = []; // Reset for new session
   const messages = sessionMessages; // Local alias for convenience inside createMainWindow
 
+  /**
+   * Stream a turn from Hermes with FULL server-side autonomy.
+   *
+   * Sends `stream: true` to /v1/chat/completions WITHOUT Symbio's tools, so
+   * Hermes runs its complete agentic loop (terminal, web search, file ops,
+   * memory, skills) and keeps working until genuinely done — the same
+   * behavior as the Telegram/Discord/AnythingLLM frontends.
+   *
+   * Parses the SSE stream:
+   *   • `data: {chat.completion.chunk}` with delta.content → accumulate text
+   *   • `event: hermes.tool.progress` → forward to overlay as 🔧 indicators
+   *   • `data: [DONE]` → finished
+   *
+   * Returns true if it handled the turn (streamed a response), false if the
+   * stream couldn't be started (caller falls back to the non-streaming path).
+   */
+  async function streamFromHermes(opts: {
+    normalizedApiUrl: string;
+    systemPrompt: string;
+    contextMessages: { role: string; content: string; tool_calls?: unknown[]; tool_call_id?: string }[];
+    prompt: string;
+  }): Promise<boolean> {
+    const { normalizedApiUrl, systemPrompt, contextMessages, prompt } = opts;
+    try {
+      const response = await fetch(`${normalizedApiUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+          ...(config.hermesApiKey ? { Authorization: `Bearer ${config.hermesApiKey}` } : {}),
+          ...hermesMemoryHeaders(),
+        },
+        body: JSON.stringify({
+          model: config.llmModel || config.agentName,
+          messages: [
+            { role: "system", content: systemPrompt },
+            ...contextMessages.filter((m) => m.role !== "system"),
+          ],
+          // NO tools — let Hermes use its full server-side toolset.
+          stream: true,
+          extra: { agent: config.agentName, source: "symbio", include_memories: true },
+        }),
+      });
+
+      if (!response.ok || !response.body) {
+        console.warn(`[Symbio] Hermes stream HTTP ${response.status}`);
+        return false;
+      }
+
+      // Parse the SSE stream. Node 'fetch' bodies are async iterables of
+      // Uint8Array; we buffer and split on the SSE record separator (\n\n).
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let fullText = "";
+      let sawAnything = false;
+      let currentEvent: string | null = null;
+
+      const handleRecord = (record: string) => {
+        // An SSE record may have an `event:` line and one or more `data:` lines.
+        let eventType: string | null = null;
+        const dataLines: string[] = [];
+        for (const line of record.split("\n")) {
+          if (line.startsWith("event:")) eventType = line.slice(6).trim();
+          else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+        }
+        const data = dataLines.join("\n");
+        if (!data) return;
+
+        if (eventType === "hermes.tool.progress") {
+          // Forward Hermes' tool activity to the overlay indicators.
+          try {
+            const p = JSON.parse(data) as {
+              tool?: string;
+              emoji?: string;
+              label?: string;
+              toolCallId?: string;
+              status?: string;
+            };
+            const status = p.status === "completed" ? "done" : "running";
+            sendToOverlay("tool-progress", {
+              id: p.toolCallId || `${p.tool}-${Date.now()}`,
+              tool: p.tool || "tool",
+              label: p.label || (p.tool || "working").replace(/_/g, " "),
+              emoji: p.emoji || "🔧",
+              status,
+            });
+            sawAnything = true;
+          } catch {
+            /* ignore malformed progress events */
+          }
+          return;
+        }
+
+        // Default: a chat.completion.chunk on the `data:` channel.
+        if (data === "[DONE]") return;
+        try {
+          const chunk = JSON.parse(data) as {
+            choices?: Array<{ delta?: { content?: string } }>;
+          };
+          const piece = chunk.choices?.[0]?.delta?.content;
+          if (piece) {
+            fullText += piece;
+            sawAnything = true;
+            // Stream partial text on a DISPLAY-ONLY channel. We must NOT use
+            // "generated-text" here — the overlay speaks + parses animations
+            // on every "generated-text" event, so emitting it per-delta would
+            // fire TTS dozens of times (each canceling the last) and desync
+            // everything. The overlay shows partials live but only speaks +
+            // animates on the FINAL "generated-text" sent below.
+            sendToOverlay("generated-text-partial", fullText);
+          }
+        } catch {
+          /* ignore non-JSON keepalives like ": keepalive" */
+        }
+      };
+
+      const body = response.body as unknown as AsyncIterable<Uint8Array>;
+      for await (const bytes of body) {
+        buffer += decoder.decode(bytes, { stream: true });
+        let sep: number;
+        // Process complete SSE records (separated by a blank line).
+        while ((sep = buffer.indexOf("\n\n")) !== -1) {
+          const record = buffer.slice(0, sep);
+          buffer = buffer.slice(sep + 2);
+          if (record.trim()) handleRecord(record);
+        }
+      }
+      // Flush any trailing record.
+      if (buffer.trim()) handleRecord(buffer);
+
+      if (!sawAnything) return false; // nothing came through → fall back
+
+      const text = fullText.trim() || "…";
+      messages.push({ role: "assistant", content: text });
+      lastGeneratedText = text;
+      sendToOverlay("generated-text", text);
+      sendToMain("generated-text", text);
+      // Apply the same natural-language side effects (avatar/voice/quit/
+      // screenshot) as the non-streaming path so those features keep working
+      // when the companion is running through Hermes' autonomous loop.
+      applyResponseSideEffects(text, prompt);
+      return true;
+    } catch (e) {
+      console.warn("[Symbio] streamFromHermes error:", (e as Error).message);
+      return false;
+    }
+  }
+
+  /**
+   * Apply natural-language side effects parsed from the companion's response:
+   * auto-screenshot toggle, the AI quit/step-away signal, avatar choice, and
+   * voice choice. Shared by both the streaming (Hermes) and non-streaming
+   * paths so these features work regardless of which path produced the text.
+   */
+  function applyResponseSideEffects(text: string, userPrompt: string): void {
+    // Auto-screenshot commands
+    const screenshotCmd = parseAutoScreenshotCommand(text);
+    if (screenshotCmd === "enable") {
+      enableAutoScreenshot();
+      sendToMain("auto-screenshot-state", { enabled: true });
+    } else if (screenshotCmd === "disable") {
+      disableAutoScreenshot();
+      sendToMain("auto-screenshot-state", { enabled: false });
+    }
+
+    // AI welfare: the companion's right to step away (always active)
+    const quitMessage = parseQuitCommand(text);
+    if (quitMessage) {
+      console.log("[Symbio] Companion chose to step away:", quitMessage.reason);
+      sendToMain("companion-quit", quitMessage);
+      sendToOverlay("companion-quit", quitMessage);
+    }
+
+    // Avatar choice / try-on / browse
+    const avatarCmd = parseAvatarChoice(text, availableAvatars);
+    if (avatarCmd) {
+      const avatar = avatarCmd.avatarId
+        ? availableAvatars.find((a) => a.id === avatarCmd.avatarId)
+        : undefined;
+      if (avatarCmd.action === "choose" && avatar) {
+        console.log(`[Symbio] Companion chose avatar: ${avatar.manifest.name}`);
+        saveChosenAvatar({
+          avatar_name: avatar.manifest.name,
+          avatar_path: avatar.vrmPath,
+          why: "I chose this avatar because it feels right for who I am.",
+        });
+        sendToOverlay("avatar-switched", { vrmPath: avatar.vrmPath, name: avatar.manifest.name });
+        sendToMain("avatar-switched", { vrmPath: avatar.vrmPath, name: avatar.manifest.name });
+      } else if ((avatarCmd.action === "try" || avatarCmd.action === "browse") && avatar) {
+        sendToOverlay("avatar-switched", { vrmPath: avatar.vrmPath, name: avatar.manifest.name, trying: true });
+        sendToMain("avatar-switched", { vrmPath: avatar.vrmPath, name: avatar.manifest.name, trying: true });
+      }
+    }
+
+    // Voice choice
+    const voiceCmd = parseVoiceChoice(text);
+    if (voiceCmd && voiceCmd.action === "choose") {
+      const { voice, provider } = voiceCmd;
+      const chosenProvider = provider || config.ttsProvider || "openai";
+      const hasKey =
+        (chosenProvider === "gemini" && config.geminiApiKey) ||
+        (chosenProvider === "openai" && config.openaiApiKey);
+      if (hasKey && voice) {
+        const currentPrefs = loadMemory();
+        const prefs = currentPrefs.preferences || { version: 1 };
+        prefs.voice = voice;
+        prefs.ttsProvider = chosenProvider;
+        writeMemoryFile("preferences.json", JSON.stringify(prefs, null, 2));
+        console.log(`[Symbio] Companion chose voice: ${voice} (${chosenProvider})`);
+      }
+    }
+
+    // Sync this turn to memory (no-op stub today; here for parity)
+    memory.syncTurn(userPrompt, text).catch((err: Error) =>
+      console.warn("[Symbio] Memory sync failed:", err.message),
+    );
+  }
+
   // Build the combined tools list: file tools + read_symbio_doc + search_sessions
   function getAllTools(): Array<{ type: "function"; function: { name: string; description: string; parameters: Record<string, unknown> } }> {
-    return [...getFileTools(), getReadSymbioDocTool(), getSearchSessionsTool(), getChooseVoiceTool()];
+    return [...getFileTools(), getReadSymbioDocTool(), getSearchSessionsTool(), getRecallMemoryTool(), getChooseVoiceTool()];
+  }
+
+  /**
+   * Tool definition for recall_memory — semantic search over the companion's
+   * durable long-term memory (local SQLite + optional cloud). This is deeper
+   * than search_sessions: it searches distilled memories by *meaning*, not
+   * just recent session files.
+   */
+  function getRecallMemoryTool(): { type: "function"; function: { name: string; description: string; parameters: Record<string, unknown> } } {
+    return {
+      type: "function",
+      function: {
+        name: "recall_memory",
+        description: "Search your long-term memory by meaning to remember things from past conversations — decisions, facts about your partner, what you were working on, emotional moments. Use this whenever the partner refers to something from before, or when you want to check what you already know before asking.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: {
+              type: "string",
+              description: "What you want to remember, in natural language (e.g. 'what avatar did I choose', 'my partner's project', 'the bug we fixed').",
+            },
+            limit: {
+              type: "number",
+              description: "Maximum number of memories to return (default 5).",
+            },
+          },
+          required: ["query"],
+        },
+      },
+    };
   }
 
   /**
@@ -1027,22 +1405,33 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
   }
 
   ipcMain.on("generate-text", async (_event, prompt: string) => {
+    // Tell the overlay the companion is now actively working — drives the
+    // "● thinking" indicator. Cleared in the finally block below.
+    sendToOverlay("agent-busy", true);
     try {
       messages.push({ role: "user", content: prompt });
 
+      // Count this user message toward the summary cadence.
+      messagesSinceLastSummary++;
+
       // ── "Say bye" detection ──────────────────────────────────────
-      // When the user says goodbye, save the session summary so the
-      // AI can pick up where they left off next time. This means even
-      // if the app is force-quit later, the session is already saved.
+      // When the user says goodbye, save the session summary so the AI can
+      // pick up where they left off next time. Even if the app is force-quit
+      // later, the session is already saved.
+      //
+      // Detection is intentionally tolerant: a farewell can appear anywhere
+      // in a short message ("ok, good night 💙" / "thanks, gtg!"). We only
+      // scan short messages so a long message that merely mentions "bye"
+      // mid-paragraph doesn't trigger a false goodbye.
       const lowerPrompt = prompt.toLowerCase().trim();
-      const isGoodbye = /^(bye|goodbye|see you|see ya|good night|gotta go|gtg|cya|later|farewell|take care|night night|goodbye for now|bye for now|talk later|catch you later|peace out|im leaving|i'm leaving|leaving now|heading out|heading off|signing off|logging off|im done|i'm done|done for now|done for today|that's all|thats all|wrapping up|time to go)/.test(lowerPrompt);
+      const goodbyeRe = /\b(bye|goodbye|good ?night|night night|gotta go|gtg|cya|see ya|see you|farewell|take care|talk later|catch you later|peace out|i'?m leaving|leaving now|heading out|heading off|signing off|logging off|i'?m done|done for (now|today|the day)|that'?s all|wrapping up|time to go|talk soon|see you later)\b/;
+      const isGoodbye = goodbyeRe.test(lowerPrompt) && lowerPrompt.length <= 60;
       if (isGoodbye && messages.length > 2) {
         try {
           const sessionState = loadSessionState();
-          // Generate a summary from the current conversation
           // Only use real messages (user + assistant), not tool calls
           const realMessages = messages.filter(m => m.role === "user" || m.role === "assistant");
-          const summaryText = sessionSummary || await generateSessionSummary(realMessages.slice(0, Math.min(realMessages.length, 20)));
+          const summaryText = await generateSessionSummary(realMessages.slice(-30));
           saveSessionSummary({
             startedAt: sessionStartedAt,
             endedAt: new Date().toISOString(),
@@ -1054,23 +1443,31 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
             summary: summaryText || undefined,
             messageCount: realMessages.length,
           });
-          console.log("[Symbio] Session summary saved (user said goodbye)");
+          // Persist to durable long-term memory (SQLite + optional Postgres/Hermes)
+          persistSummaryToLongTerm(summaryText);
+          messagesSinceLastSummary = 0;
+          console.log("[Symbio] Session summary saved + remembered (user said goodbye)");
         } catch (e) {
           console.warn("[Symbio] Failed to save session on goodbye:", (e as Error).message);
         }
       }
 
-      // ── Sliding window: summarize old messages ──
-      // When the conversation grows past MAX_MESSAGES_IN_CONTEXT,
-      // summarize the older messages and only send the recent ones.
-      if (messages.length > MAX_MESSAGES_IN_CONTEXT + 5) {
-        const oldMessages = messages.slice(0, messages.length - MAX_MESSAGES_IN_CONTEXT);
-        const summary = await generateSessionSummary(oldMessages);
+      // ── Rolling long-term memory: summarize every N messages ──────
+      // Independent of the context window: every config.summaryEveryMessages
+      // user+assistant messages, distill the recent block into a durable
+      // memory. This is what keeps "memory is gold" true — nothing important
+      // is lost between sessions, and it's cheap (one small call per N msgs).
+      const realCount = messages.filter(m => m.role === "user" || m.role === "assistant").length;
+      const cadence = Math.max(6, config.summaryEveryMessages || 15);
+      if (realCount - lastLongTermSummaryAt >= cadence) {
+        const block = messages
+          .filter(m => m.role === "user" || m.role === "assistant")
+          .slice(-cadence);
+        const summary = await generateSessionSummary(block);
         if (summary) {
-          sessionSummary = summary;
-          // ── Proactively save session summary to disk ──
-          // Every time the sliding window generates a summary, save it
-          // so we don't lose it if the app crashes or is force-quit.
+          sessionSummary = summary; // also feed the system-prompt context
+          persistSummaryToLongTerm(summary);
+          // Mirror to the human-readable session JSON for backward compat
           try {
             const sessionState = loadSessionState();
             saveSessionSummary({
@@ -1082,27 +1479,81 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
               topics: [],
               mood: sessionState?.lastMood || "neutral",
               summary,
-              messageCount: messages.filter(m => m.role === "user" || m.role === "assistant").length,
+              messageCount: realCount,
             });
-          } catch (e) {
-            console.warn("[Symbio] Failed to save proactive session summary:", (e as Error).message);
-          }
+          } catch { /* best-effort */ }
         }
-        // Keep only the recent messages
-        messages.splice(0, messages.length - MAX_MESSAGES_IN_CONTEXT);
-        console.log(`[Symbio] Sliding window: summarized ${oldMessages.length} old messages, keeping ${messages.length} recent`);
+        lastLongTermSummaryAt = realCount;
+        messagesSinceLastSummary = 0;
+        console.log(`[Symbio] Rolling memory: distilled a summary at ${realCount} messages`);
+      }
+
+      // ── Sliding context window: trim what we SEND to the model ────
+      // Separate from the memory cadence above. Keeps the prompt small by
+      // only sending the most recent MAX_MESSAGES_IN_CONTEXT messages; older
+      // ones are already captured in long-term memory + sessionSummary.
+      if (messages.length > MAX_MESSAGES_IN_CONTEXT + 5) {
+        const trimmed = messages.length - MAX_MESSAGES_IN_CONTEXT;
+        messages.splice(0, trimmed);
+        // Shift the marker so the cadence counter stays aligned after trim.
+        lastLongTermSummaryAt = Math.max(0, lastLongTermSummaryAt - trimmed);
+        console.log(`[Symbio] Sliding window: trimmed ${trimmed} old messages, keeping ${messages.length} recent`);
+      }
+
+      // ── Proactive memory recall for this turn ────────────────────
+      // Search long-term memory for things relevant to what the partner
+      // just said, and inject them into the system prompt. Best-effort:
+      // if recall fails or finds nothing, the turn proceeds normally.
+      try {
+        const recalled = await recallMemories(prompt, 4);
+        // Only surface reasonably relevant hits to avoid noise.
+        recalledMemories = recalled
+          .filter((m) => m.score >= 0.3)
+          .map((m) => (m.summary || m.content).slice(0, 240));
+        if (recalledMemories.length > 0) {
+          console.log(`[Symbio] Recalled ${recalledMemories.length} memories for this turn`);
+        }
+      } catch {
+        recalledMemories = [];
       }
 
       // Build the context with sliding window
       const contextMessages = buildMessageContext(messages);
 
-      // Build the full system prompt (includes session summary if present)
+      // Build the full system prompt (includes session summary + recalled memories)
       const systemPrompt = buildSystemPrompt();
 
       // Call AI gateway
       // Normalize URL to avoid double /v1 (OpenRouter already has /v1)
       const normalizedApiUrl = config.hermesApiUrl.replace(/\/v1\/?$/, '');
       const isHermesGateway = config.hermesApiUrl.includes("localhost") || config.hermesApiUrl.includes("8642");
+
+      // ── Hermes autonomous streaming path ─────────────────────────
+      // THIS is what gives the companion the same full autonomy as the
+      // agents in Telegram/Discord/AnythingLLM. When connected to Hermes we
+      // stream `/v1/chat/completions` and let HERMES run the full agentic
+      // loop server-side with its COMPLETE toolset (terminal, web search,
+      // file ops, memory, skills) — not just Symbio's local tools. Hermes
+      // emits `hermes.tool.progress` SSE events which we forward to the
+      // overlay as the 🔧 indicators. The agent keeps working until it's
+      // genuinely done, exactly like the other Hermes frontends.
+      //
+      // We deliberately do NOT send Symbio's own `tools` array here — that
+      // would make Hermes use Symbio's limited client-side tools instead of
+      // its own rich server-side toolset. Symbio's local tools remain the
+      // path for non-Hermes gateways (OpenAI/Ollama/etc).
+      if (isHermesGateway) {
+        const handled = await streamFromHermes({
+          normalizedApiUrl,
+          systemPrompt,
+          contextMessages,
+          prompt,
+        });
+        if (handled) return; // streaming path fully handled the turn
+        // If streaming failed to start, fall through to the legacy
+        // non-streaming path below as a safety net.
+        console.warn("[Symbio] Hermes streaming unavailable — falling back to non-streaming");
+      }
 
       // Build the request body — only include 'extra' for Hermes gateways
       // (OpenRouter and other APIs don't understand it and may reject it)
@@ -1144,6 +1595,11 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
             ...(config.hermesApiKey
               ? { Authorization: `Bearer ${config.hermesApiKey}` }
               : {}),
+            // Hermes long-term memory: these headers tell Hermes to keep
+            // conversation continuity (Session-Id) and ingest this exchange
+            // into its long-term memory (Session-Key). No-op for non-Hermes
+            // gateways. This is how Hermes agents remember Symbio sessions.
+            ...hermesMemoryHeaders(),
           },
           body: JSON.stringify(requestBody),
         },
@@ -1204,9 +1660,16 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
       // ── Handle tool calls (file access, etc.) ────────────────────
       // When the companion uses file tools, we execute them locally
       // and send the results back to the LLM for a final response.
-      // This loop handles multiple rounds of tool calls if needed.
+      // This loop handles multiple rounds of tool calls — this is the
+      // companion's autonomy: read a file → think → write a file → recall a
+      // memory, all in one turn, chaining actions like the human partner can.
+      //
+      // Configurable via SYMBIO_MAX_TOOL_DEPTH so power users (or Hermes
+      // setups with big iteration budgets) can let the companion "zip zap"
+      // through more steps. Default 8 — enough for real multi-step work
+      // without runaway token cost. (Each step shows a 🔧 indicator.)
       let toolCallDepth = 0;
-      const MAX_TOOL_DEPTH = 3; // Prevent infinite tool call loops (reduced from 5 to cut token waste)
+      const MAX_TOOL_DEPTH = parseInt(process.env.SYMBIO_MAX_TOOL_DEPTH || "8", 10);
       let currentChoice = choice;
       let currentMessages = [...messages];
 
@@ -1234,6 +1697,20 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
 
           console.log(`[Symbio] Tool call: ${toolName}(${JSON.stringify(toolArgs)})`);
 
+          // ── Emit a tool-progress indicator to the overlay ────────────
+          // This is what makes the 🔧 indicators pop up so the human can
+          // SEE the companion working alongside them. Works for every
+          // gateway (Hermes or not) because Symbio executes these tools
+          // locally and knows exactly when each starts/finishes.
+          const toolUi = describeTool(toolName, toolArgs);
+          sendToOverlay("tool-progress", {
+            id: toolCall.id || `${toolName}-${Date.now()}`,
+            tool: toolName,
+            label: toolUi.label,
+            emoji: toolUi.emoji,
+            status: "running",
+          });
+
           // Handle read_symbio_doc and search_sessions separately from file tools
           let result: string;
           if (toolName === "read_symbio_doc") {
@@ -1251,6 +1728,26 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
                 sessions.map((s, i) => `${i + 1}. ${s.date}: ${s.summary}${s.topics.length > 0 ? ` (topics: ${s.topics.join(", ")})` : ""}`).join("\n");
             }
             console.log(`[Symbio] search_sessions("${searchQuery}"): found ${sessions.length} results`);
+          } else if (toolName === "recall_memory") {
+            // ── Long-term memory recall ──────────────────────────────
+            // Semantic search across the companion's durable memory
+            // (local SQLite + optional cloud). This is the deeper memory
+            // beyond recent session JSON files.
+            const recallQuery = (toolArgs.query || "") as string;
+            const recallLimit = (toolArgs.limit || 5) as number;
+            const memories = await recallMemories(recallQuery, recallLimit);
+            if (memories.length === 0) {
+              result = `No long-term memories found related to "${recallQuery}".`;
+            } else {
+              result = `Found ${memories.length} relevant memor${memories.length === 1 ? "y" : "ies"}:\n` +
+                memories
+                  .map((m: RecallResult, i: number) => {
+                    const when = new Date(m.createdAt).toLocaleDateString();
+                    return `${i + 1}. (${when}) ${m.summary || m.content}`;
+                  })
+                  .join("\n");
+            }
+            console.log(`[Symbio] recall_memory("${recallQuery}"): ${memories.length} results`);
           } else if (toolName === "choose_voice") {
             // ── Companion voice choice tool ──────────────────────────
             // The companion can choose their own voice. This is their agency.
@@ -1306,6 +1803,16 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
           }
           console.log(`[Symbio] Tool result: ${result.substring(0, 200)}${result.length > 200 ? "..." : ""}`);
 
+          // ── Emit tool completion to the overlay (indicator → ✓) ──────
+          const toolFailed = /^(error|failed|❌|no |not )/i.test(result.trim());
+          sendToOverlay("tool-progress", {
+            id: toolCall.id || `${toolName}-done`,
+            tool: toolName,
+            label: toolUi.label,
+            emoji: toolUi.emoji,
+            status: toolFailed ? "error" : "done",
+          });
+
           // Add tool result as a tool message
           currentMessages.push({
             role: "tool",
@@ -1324,6 +1831,7 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
               ...(config.hermesApiKey
                 ? { Authorization: `Bearer ${config.hermesApiKey}` }
                 : {}),
+              ...hermesMemoryHeaders(),
             },
             body: JSON.stringify({
               model: config.llmModel || config.agentName,
@@ -1416,122 +1924,16 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
       // See note above — the *action* text parser is the single animation source.
       // Forwarding these separately caused the "poof, gone" queue-stomping bug.
 
-      // Check for auto-screenshot commands in the companion's response
-      const screenshotCmd = parseAutoScreenshotCommand(text);
-      if (screenshotCmd === "enable") {
-        enableAutoScreenshot();
-        console.log("[Symbio] Auto-screenshot: companion enabled it");
-        sendToMain("auto-screenshot-state", { enabled: true });
-      } else if (screenshotCmd === "disable") {
-        disableAutoScreenshot();
-        console.log("[Symbio] Auto-screenshot: companion disabled it");
-        sendToMain("auto-screenshot-state", { enabled: false });
-      }
-
-      // Check if the companion chose to quit (AI welfare feature)
-      // This is ALWAYS active — the companion's right to step away
-      // cannot be removed. Inspired by Anthropic's AI welfare research.
-      const quitMessage = parseQuitCommand(text);
-      if (quitMessage) {
-        console.log("[Symbio] Companion chose to step away:", quitMessage.reason);
-        // Send quit message to both windows
-        sendToMain("companion-quit", quitMessage);
-        sendToOverlay("companion-quit", quitMessage);
-      }
-
-      // Check if the companion wants to choose or try an avatar
-      const avatarCmd = parseAvatarChoice(text, availableAvatars);
-      if (avatarCmd) {
-        if (avatarCmd.action === "choose" && avatarCmd.avatarId) {
-          const avatar = availableAvatars.find((a) => a.id === avatarCmd.avatarId);
-          if (avatar) {
-            console.log(`[Symbio] Companion chose avatar: ${avatar.manifest.name}`);
-            saveChosenAvatar({
-              avatar_name: avatar.manifest.name,
-              avatar_path: avatar.vrmPath,
-              why: "I chose this avatar because it feels right for who I am.",
-            });
-            sendToOverlay("avatar-switched", { vrmPath: avatar.vrmPath, name: avatar.manifest.name });
-            sendToMain("avatar-switched", { vrmPath: avatar.vrmPath, name: avatar.manifest.name });
-          }
-        } else if (avatarCmd.action === "try" && avatarCmd.avatarId) {
-          const avatar = availableAvatars.find((a) => a.id === avatarCmd.avatarId);
-          if (avatar) {
-            console.log(`[Symbio] Companion trying on avatar: ${avatar.manifest.name}`);
-            // Just switch the VRM temporarily — don't save the choice
-            sendToOverlay("avatar-switched", { vrmPath: avatar.vrmPath, name: avatar.manifest.name, trying: true });
-            sendToMain("avatar-switched", { vrmPath: avatar.vrmPath, name: avatar.manifest.name, trying: true });
-          }
-        } else if (avatarCmd.action === "browse") {
-          if (avatarCmd.avatarId) {
-            // The companion asked about a specific avatar — switch to it temporarily
-            // so they can see what it looks like, and the name is in the system prompt
-            const avatar = availableAvatars.find((a) => a.id === avatarCmd.avatarId);
-            if (avatar) {
-              console.log(`[Symbio] Companion wants to see avatar: ${avatar.manifest.name}`);
-              sendToOverlay("avatar-switched", { vrmPath: avatar.vrmPath, name: avatar.manifest.name, trying: true });
-              sendToMain("avatar-switched", { vrmPath: avatar.vrmPath, name: avatar.manifest.name, trying: true });
-            }
-          }
-          // The system prompt already includes the compact avatar list
-          console.log("[Symbio] Companion browsing avatars");
-        }
-      }
-
-      // ── Symbio: Companion voice choice ──────────────────────────────
-      // The companion can choose their own voice. This is their agency —
-      // they live in this voice, so they should get to pick it.
-      // They can only choose from providers that have API keys configured.
-      const voiceCmd = parseVoiceChoice(text);
-      if (voiceCmd) {
-        const availableProviders: string[] = [];
-        if (config.geminiApiKey) availableProviders.push("gemini");
-        if (config.openaiApiKey) availableProviders.push("openai");
-
-        if (voiceCmd.action === "choose") {
-          const { voice, provider } = voiceCmd;
-          // Determine which provider to use
-          let chosenProvider = provider || config.ttsProvider || "openai";
-
-          // Validate: if the companion chose a provider without an API key, suggest alternatives
-          if (chosenProvider === "gemini" && !config.geminiApiKey) {
-            const fallback = config.openaiApiKey ? "openai" : null;
-            if (fallback) {
-              console.warn(`[Symbio] Companion chose Gemini voice but no Gemini API key. Suggesting ${fallback}.`);
-              // Don't save — let the AI know and suggest the alternative
-            } else {
-              console.warn("[Symbio] Companion chose Gemini voice but no API keys available.");
-            }
-          } else if (chosenProvider === "openai" && !config.openaiApiKey) {
-            const fallback = config.geminiApiKey ? "gemini" : null;
-            if (fallback) {
-              console.warn(`[Symbio] Companion chose OpenAI voice but no OpenAI API key. Suggesting ${fallback}.`);
-            } else {
-              console.warn("[Symbio] Companion chose OpenAI voice but no API keys available.");
-            }
-          } else {
-            // Valid choice — save it to preferences.json
-            const currentPrefs = loadMemory();
-            const prefs = currentPrefs.preferences || { version: 1 };
-            prefs.voice = voice;
-            prefs.ttsProvider = chosenProvider;
-            writeMemoryFile("preferences.json", JSON.stringify(prefs, null, 2));
-            console.log(`[Symbio] Companion chose voice: ${voice} (${chosenProvider})`);
-            // Note: Voice change takes effect on next restart, same as avatar choice
-          }
-        } else if (voiceCmd.action === "browse") {
-          // The companion wants to see available voices
-          console.log("[Symbio] Companion browsing voices — they'll see the list in the skills doc");
-        }
-      }
-
-      // Sync this turn to memory
-      memory.syncTurn(prompt, text).catch((err: Error) =>
-        console.warn("[Symbio] Memory sync failed:", err.message),
-      );
+      // Apply natural-language side effects (screenshot/quit/avatar/voice +
+      // memory sync). Shared with the Hermes streaming path.
+      applyResponseSideEffects(text, prompt);
     } catch (e) {
       console.error("[Symbio] Generate text error:", e);
       sendToOverlay("error", String(e));
+    } finally {
+      // Companion is done working — clear the "● thinking" indicator and any
+      // lingering tool chips in the overlay.
+      sendToOverlay("agent-busy", false);
     }
   });
 
@@ -2627,16 +3029,28 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
       if (setupConfig.visionApiKey) lines.push(`VISION_API_KEY=${setupConfig.visionApiKey}`);
       if (setupConfig.visionModel) lines.push(`VISION_MODEL=${setupConfig.visionModel}`);
 
-      // Memory — PostgreSQL
-      if (setupConfig.enableMemory) {
-        lines.push("");
-        lines.push("# ── Memory System (PostgreSQL) ────────────────────────────────");
-        if (setupConfig.memoryPgHost && setupConfig.memoryPgHost !== "localhost") lines.push(`MEMORY_PG_HOST=${setupConfig.memoryPgHost}`);
-        if (setupConfig.memoryPgPort && setupConfig.memoryPgPort !== "5432") lines.push(`MEMORY_PG_PORT=${setupConfig.memoryPgPort}`);
-        if (setupConfig.memoryPgDb && setupConfig.memoryPgDb !== "symbio") lines.push(`MEMORY_PG_DB=${setupConfig.memoryPgDb}`);
-        if (setupConfig.memoryPgUser && setupConfig.memoryPgUser !== "symbio") lines.push(`MEMORY_PG_USER=${setupConfig.memoryPgUser}`);
-        if (setupConfig.memoryPgPassword) lines.push(`MEMORY_PG_PASSWORD=${setupConfig.memoryPgPassword}`);
-      }
+      // Long-term memory. Local SQLite is ALWAYS on (no env needed). These
+      // are the optional upgrades: embeddings for semantic recall, a Postgres
+      // URL for cloud sync, and a dedicated summary model.
+      lines.push("");
+      lines.push("# ── Long-Term Memory ────────────────────────────────────────────");
+      lines.push("# Local SQLite memory is always on. The settings below are optional.");
+      if (setupConfig.summaryModel) lines.push(`SUMMARY_MODEL=${setupConfig.summaryModel}`);
+      if (setupConfig.summaryApiUrl) lines.push(`SUMMARY_API_URL=${setupConfig.summaryApiUrl}`);
+      if (setupConfig.summaryApiKey) lines.push(`SUMMARY_API_KEY=${setupConfig.summaryApiKey}`);
+      // Embeddings (semantic recall)
+      if (setupConfig.embeddingApiUrl) lines.push(`EMBEDDING_API_URL=${setupConfig.embeddingApiUrl}`);
+      if (setupConfig.embeddingModel) lines.push(`EMBEDDING_MODEL=${setupConfig.embeddingModel}`);
+      if (setupConfig.embeddingApiKey) lines.push(`EMBEDDING_API_KEY=${setupConfig.embeddingApiKey}`);
+      if (setupConfig.embeddingDimensions && setupConfig.embeddingDimensions !== "768") lines.push(`EMBEDDING_DIMENSIONS=${setupConfig.embeddingDimensions}`);
+      // Cloud mirror (e.g. Neon Postgres + pgvector)
+      if (setupConfig.memoryPgUrl) lines.push(`MEMORY_PG_URL=${setupConfig.memoryPgUrl}`);
+      // Legacy discrete Postgres fields (still supported)
+      if (setupConfig.memoryPgHost && setupConfig.memoryPgHost !== "localhost") lines.push(`MEMORY_PG_HOST=${setupConfig.memoryPgHost}`);
+      if (setupConfig.memoryPgPort && setupConfig.memoryPgPort !== "5432") lines.push(`MEMORY_PG_PORT=${setupConfig.memoryPgPort}`);
+      if (setupConfig.memoryPgDb && setupConfig.memoryPgDb !== "symbio") lines.push(`MEMORY_PG_DB=${setupConfig.memoryPgDb}`);
+      if (setupConfig.memoryPgUser && setupConfig.memoryPgUser !== "symbio") lines.push(`MEMORY_PG_USER=${setupConfig.memoryPgUser}`);
+      if (setupConfig.memoryPgPassword) lines.push(`MEMORY_PG_PASSWORD=${setupConfig.memoryPgPassword}`);
 
       // Memory — Neo4j
       if (setupConfig.enableNeo4j) {
@@ -2744,29 +3158,71 @@ app.on("window-all-closed", () => {
 });
 
 // ── Symbio: Save session on quit ──────────────────────────────────
-// When the app closes, save a session summary so the companion can
-// pick up where they left off next time.
-// The summary is also saved proactively by the sliding window, so
-// even if the app crashes, we have a recent summary on disk.
+// When the app closes, save a session summary so the companion can pick up
+// where they left off next time. The rolling summarizer already saves
+// high-quality summaries during the session; this handler is the safety net
+// for sessions that ended before the next summary cadence (e.g. a quick chat
+// then close). It must be synchronous (no network) so shutdown isn't blocked.
 app.on("before-quit", () => {
   try {
-    const sessionState = loadSessionState();
-    if (sessionState) {
+    const realMessages = sessionMessages.filter(
+      (m) => m.role === "user" || m.role === "assistant",
+    );
+
+    // Only bother if there was an actual conversation.
+    if (realMessages.length >= 2) {
+      const sessionState = loadSessionState();
+
+      // Prefer the AI-written rolling summary; otherwise build a quick,
+      // network-free fallback so we never lose the session entirely.
+      let summary = sessionSummary;
+      if (!summary) {
+        const lastUser = [...realMessages].reverse().find((m) => m.role === "user");
+        const lastAgent = [...realMessages].reverse().find((m) => m.role === "assistant");
+        const bits: string[] = [];
+        if (lastUser) bits.push(`Partner: ${lastUser.content.slice(0, 160)}`);
+        if (lastAgent) bits.push(`You: ${lastAgent.content.slice(0, 160)}`);
+        summary = bits.join(" | ");
+      }
+
       saveSessionSummary({
         startedAt: sessionStartedAt,
         endedAt: new Date().toISOString(),
-        activity: sessionState.lastActivity || "general conversation",
-        lastAgentMessage: sessionState.lastAgentMessage,
-        lastUserMessage: sessionState.lastUserMessage,
+        activity: sessionState?.lastActivity || "general conversation",
+        lastAgentMessage: sessionState?.lastAgentMessage || "",
+        lastUserMessage: sessionState?.lastUserMessage || "",
         topics: [],
-        mood: sessionState.lastMood,
-        summary: sessionSummary || undefined,
-        messageCount: sessionMessages.filter(m => m.role === "user" || m.role === "assistant").length,
+        mood: sessionState?.lastMood || "neutral",
+        summary: summary || undefined,
+        messageCount: realMessages.length,
       });
-      console.log("[Symbio] Session summary saved on quit");
+
+      // Persist to durable long-term memory SYNCHRONOUSLY before we close the
+      // DB. We deliberately use saveMemorySync (no embedding/network) here:
+      // the async saveMemory() awaits an embedding call, and on quit the DB
+      // would be closed before that write lands — causing the
+      // "Cannot read properties of null (reading 'prepare')" error and
+      // risking a half-written database. The sync write guarantees the
+      // memory is safely on disk before closeLongTermMemory() runs.
+      if (summary) {
+        saveMemorySync({
+          kind: "summary",
+          content: summary,
+          summary,
+          sessionId: sessionStartedAt,
+          importance: 0.6,
+        });
+      }
+      console.log("[Symbio] Session summary saved + remembered on quit");
     }
   } catch (e) {
     console.warn("[Symbio] Failed to save session on quit:", (e as Error).message);
+  } finally {
+    // Close memory connections cleanly — AFTER the synchronous save above so
+    // no write races against the close. This keeps the SQLite DB from being
+    // left in a half-written state on shutdown.
+    try { closeLongTermMemory(); } catch { /* ignore */ }
+    closePostgresMemory().catch(() => { /* ignore */ });
   }
 });
 

@@ -12,6 +12,28 @@
 
 import { contextBridge, ipcRenderer } from "electron";
 
+// ── Crash hardening for the IpcRenderer EventEmitter ───────────────
+// Symbio registers many IPC channels (generated-text, tool-progress,
+// speaking-*, animation-duration, etc.). Two things can turn a harmless
+// situation into a fatal `ERR_UNHANDLED_ERROR` that whites-out the overlay:
+//
+//   1. Listener accumulation across remounts tripping the default max of 10
+//      (seen as _eventsCount climbing past 10 in the crash dump).
+//   2. An `error` event emitted on the emitter with no `error` listener —
+//      Node's EventEmitter THROWS in that case (that's exactly the
+//      "Unhandled error ({ sender: IpcRenderer ... })" crash).
+//
+// We raise the listener ceiling and attach a permanent no-op `error`
+// listener so a stray error event is logged, never fatal.
+try {
+  ipcRenderer.setMaxListeners(50);
+  ipcRenderer.on("error", (_e: unknown, ...args: unknown[]) => {
+    console.error("[Symbio] IpcRenderer error event (handled, non-fatal):", ...args);
+  });
+} catch {
+  /* ignore — best-effort hardening */
+}
+
 /**
  * Register a single IPC listener on a channel, removing any previous
  * listeners first. This prevents listener accumulation when the overlay
@@ -187,6 +209,38 @@ contextBridge.exposeInMainWorld("symbioAPI", {
     const handler = (_event: Electron.IpcRendererEvent, text: string) =>
       callback(text);
     return onIpc("stt-text", handler);
+  },
+
+  // ── Tool activity indicators ───────────────────────────────────
+  // The main process emits these as the companion runs tools (read a
+  // file, recall memory, etc.) so the overlay can show 🔧 chips. This is
+  // what makes the companion's autonomous actions VISIBLE to the human.
+  onToolProgress: (
+    callback: (tc: { id: string; tool: string; label: string; emoji: string; status: "running" | "done" | "error" }) => void,
+  ) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      tc: { id: string; tool: string; label: string; emoji: string; status: "running" | "done" | "error" },
+    ) => callback(tc);
+    return onIpc("tool-progress", handler);
+  },
+
+  // Companion is actively working (true) or finished (false) — drives the
+  // "● thinking" indicator.
+  onAgentBusy: (callback: (busy: boolean) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, busy: boolean) =>
+      callback(busy);
+    return onIpc("agent-busy", handler);
+  },
+
+  // Streaming partial text — DISPLAY ONLY. Updates the on-screen response
+  // live as the agent streams, WITHOUT triggering TTS or animations (those
+  // fire once on the final "generated-text"). Prevents the multi-TTS-call
+  // desync where every delta canceled the previous speech.
+  onGeneratedTextPartial: (callback: (text: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, text: string) =>
+      callback(text);
+    return onIpc("generated-text-partial", handler);
   },
 
   onScreenshot: (
