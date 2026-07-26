@@ -174,6 +174,14 @@ export interface SymbioConfig {
 
   // Screenshot interval (seconds) — how often the companion can auto-screenshot
   screenshotInterval: number;
+
+  // Full-conversation transcripts. When enabled (default true), every session
+  // is saved as a human-readable Markdown file the human can keep, move to the
+  // cloud/SSD, and that the companion can keyword-search — no gateway needed.
+  saveTranscripts: boolean;
+  // Where transcripts are written. Empty = default (Desktop/Symbio Transcripts,
+  // resolved in main.ts where the desktop path is known).
+  transcriptDir: string;
 }
 
 export function loadConfig(): SymbioConfig {
@@ -295,6 +303,9 @@ export function loadConfig(): SymbioConfig {
     memoryPgSsl: getEnv("MEMORY_PG_SSL", "true").toLowerCase() !== "false",
 
     screenshotInterval: getEnvInt("SCREENSHOT_INTERVAL", 30),
+
+    saveTranscripts: getEnv("SAVE_TRANSCRIPTS", "true").toLowerCase() !== "false",
+    transcriptDir: getEnv("TRANSCRIPT_DIR", ""),
   };
 }
 

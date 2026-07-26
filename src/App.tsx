@@ -23,6 +23,8 @@ import {
   AccordionSummary,
   AccordionDetails,
   Collapse,
+  Snackbar,
+  Alert,
 } from "@mui/material";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { type ChangeEvent, type FormEvent, useCallback, useState, useEffect, useRef } from "react";
@@ -61,6 +63,8 @@ const App = () => {
   const [mcpToolLoading, setMcpToolLoading] = useState(false);
   const [isAutoScreenshotEnabled, setIsAutoScreenshotEnabled] = useState(false);
   const [companionQuitMessage, setCompanionQuitMessage] = useState<string | null>(null);
+  // Brief confirmation when a memory/session summary is saved ("Memory saved 💙").
+  const [memorySavedToast, setMemorySavedToast] = useState<string | null>(null);
 
   // ── Symbio: First-Run Setup Wizard ────────────────────────────────
   // Check if the app needs setup (no API key configured).
@@ -259,6 +263,18 @@ const App = () => {
         } else if (result?.error) {
           setVisionResult(`Error: ${result.error}`);
         }
+      },
+    );
+    return () => cleanup?.();
+  }, []);
+
+  // ── Symbio: Listen for "memory saved" confirmations ─────────────
+  // Shows a brief toast when the companion distills + saves a memory, so the
+  // human knows their conversation was remembered (and it's safe to close).
+  useEffect(() => {
+    const cleanup = window.symbioAPI?.onMemorySaved?.(
+      (data: { message: string }) => {
+        if (data?.message) setMemorySavedToast(data.message);
       },
     );
     return () => cleanup?.();
@@ -754,6 +770,23 @@ const App = () => {
       </Stack>
       {/* Hidden container for WaveSurfer mic recording */}
       <div id="recorder" style={{ display: "none" }} />
+
+      {/* ── "Memory saved" confirmation toast ────────────────────── */}
+      <Snackbar
+        open={Boolean(memorySavedToast)}
+        autoHideDuration={3500}
+        onClose={() => setMemorySavedToast(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert
+          onClose={() => setMemorySavedToast(null)}
+          severity="success"
+          variant="filled"
+          sx={{ bgcolor: "#0f766e", color: "white", "& .MuiAlert-icon": { color: "white" } }}
+        >
+          {memorySavedToast}
+        </Alert>
+      </Snackbar>
 
       {/* ── AI Quit Overlay ──────────────────────────────────────── */}
       {/* When the companion chooses to step away, this blocks the UI */}

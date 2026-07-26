@@ -90,7 +90,8 @@ import {
   closeLongTermMemory,
   type RecallResult,
 } from "./utils/longTermMemory";
-import { closePostgresMemory } from "./utils/postgresMemory";
+import { closePostgresMemory, syncMemoryToPostgres, postgresEnabled } from "./utils/postgresMemory";
+import { embedText } from "./utils/embeddings";
 import { MiniverseClient } from "./transport/MiniverseClient";
 import { MCPToolsClient, TOOL_CATEGORIES } from "./transport/MCPToolsClient";
 import { updateDynamicAgent } from "./transport/HermesTransport";
@@ -149,8 +150,32 @@ import {
   getAvailableDocNames,
   type DocName,
 } from "./utils/symbioDocs";
+import {
+  initTranscriptLogger,
+  startTranscriptSession,
+  recordTurn,
+  finalizeTranscript,
+  searchTranscripts,
+  transcriptCount,
+  getTranscriptDir,
+} from "./utils/transcriptLogger";
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Race a promise against a timeout so a slow/offline endpoint can never hang
+ * a critical path (e.g. cloud memory sync during shutdown). Rejects with a
+ * timeout error if `ms` elapses first; the caller decides how to handle it.
+ */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); },
+    );
+  });
+}
 
 // Disable auto-updater for now (we'll handle updates ourselves)
 // updateElectronApp();
@@ -310,7 +335,24 @@ let sessionMessages: { role: "user" | "assistant" | "tool"; content: string; too
 // from the sliding-context window so memory cadence is independent of
 // context size.
 let messagesSinceLastSummary = 0;
-let lastLongTermSummaryAt = 0; // index marker into sessionMessages
+let lastLongTermSummaryAt = 0; // monotonic turn count at last summary
+// Monotonic count of human turns this session. Unlike the message array (which
+// the sliding context window trims), this only ever increases — so the rolling
+// summary cadence fires reliably even in long sessions where old messages were
+// dropped from the in-memory window.
+let totalUserTurns = 0;
+// A full, UN-trimmed record of the session for summarization. The `messages`
+// array gets trimmed by the sliding context window, which used to starve the
+// summarizer (it only ever saw the tail). This keeps the whole conversation
+// (lightly capped) so summaries reflect the ENTIRE session, not just the end.
+let fullSessionTurns: { role: "user" | "assistant"; content: string }[] = [];
+function recordForSummary(role: "user" | "assistant", content: string): void {
+  if (!content || !content.trim()) return;
+  fullSessionTurns.push({ role, content });
+  // Safety cap so a marathon session can't grow memory without bound. We keep
+  // the most recent 200 turns; older substance is already in prior summaries.
+  if (fullSessionTurns.length > 200) fullSessionTurns = fullSessionTurns.slice(-200);
+}
 // Relevant long-term memories recalled for the CURRENT turn, injected into
 // the system prompt so the companion proactively remembers without having to
 // call a tool. Refreshed each user message.
@@ -455,6 +497,8 @@ function describeTool(
       return { emoji: "🗂️", label: `searching sessions` };
     case "recall_memory":
       return { emoji: "🧠", label: `recalling memory` };
+    case "search_transcripts":
+      return { emoji: "📜", label: `searching past chats` };
     case "choose_voice":
       return { emoji: "🎙️", label: `choosing voice` };
     case "file_read":
@@ -651,6 +695,21 @@ app.on("ready", () => {
       console.log(`[Symbio] Long-term memory: ${memoryCount()} memories stored`);
     })
     .catch((e) => console.warn("[Symbio] Long-term memory init failed:", e?.message));
+
+  // ── Symbio: Initialize full-conversation transcripts ─────────────
+  // Every session is saved as a human-readable Markdown file the human can
+  // keep/move anywhere, and that the companion can keyword-search — even
+  // without a Hermes gateway or computer-use. Defaults to a visible
+  // "Symbio Transcripts" folder on the Desktop; override with TRANSCRIPT_DIR.
+  if (config.saveTranscripts) {
+    const defaultTranscriptDir = join(app.getPath("desktop"), "Symbio Transcripts");
+    initTranscriptLogger(
+      config.transcriptDir || defaultTranscriptDir,
+      config.agentConfig.displayName || config.agentName,
+    );
+    startTranscriptSession(`symbio_${Date.parse(sessionStartedAt) || Date.now()}`, sessionStartedAt);
+    console.log(`[Symbio] Transcripts → ${getTranscriptDir()} (${transcriptCount()} saved)`);
+  }
 
   // Each app launch is a fresh Hermes session thread (continuity within a
   // sitting), while the stable session key carries long-term memory across.
@@ -928,7 +987,7 @@ VISION: Say "let me see your screen" or "show me your screen" to request a scree
     // Instead of injecting everything, tell the AI what's available.
     prompt += `
 
-TOOLS: You have file tools (read/write/list/delete), read_symbio_doc() for on-demand docs, recall_memory() for your long-term memory, and search_sessions() for recent session logs. Call read_symbio_doc() ONE AT A TIME only when you need specific info — do NOT call all docs at once. Available: "agent" (your rights), "skills" (full capabilities), "soul" (your identity), "memory" (your memories), "avatars" (avatar choices). Use recall_memory("what you want to remember") to search your durable memory by meaning, and search_sessions("keywords") for recent conversation logs. You can choose an avatar anytime — say "I want to try on [name]" or "I choose [name]". You can also choose your voice — say "I want to use the voice Nova" or call choose_voice({voice: "Nova", provider: "openai"}).
+TOOLS: You have file tools (read/write/list/delete), read_symbio_doc() for on-demand docs, recall_memory() for your long-term memory, and search_sessions() for recent session logs. Call read_symbio_doc() ONE AT A TIME only when you need specific info — do NOT call all docs at once. Available: "agent" (your rights), "skills" (full capabilities), "soul" (your identity), "memory" (your memories), "avatars" (avatar choices). Use recall_memory("what you want to remember") to search your durable memory by meaning, search_sessions("keywords") for recent conversation logs, and search_transcripts("keywords") to search the FULL word-for-word history of past chats (great for finding an exact link, idea, or thing that was said). You can choose an avatar anytime — say "I want to try on [name]" or "I choose [name]". You can also choose your voice — say "I want to use the voice Nova" or call choose_voice({voice: "Nova", provider: "openai"}).
 
 YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with file_list):
 - companion-sandbox/ — your private workspace for any files
@@ -946,6 +1005,8 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
   sessionStartedAt = new Date().toISOString(); // When this session began
   messagesSinceLastSummary = 0;
   lastLongTermSummaryAt = 0;
+  totalUserTurns = 0;
+  fullSessionTurns = [];
 
   /**
    * Build the message array for the API call with sliding window.
@@ -972,17 +1033,39 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
    */
   async function generateSessionSummary(
     oldMessages: { role: string; content: string }[]
-  ): Promise<string> {
-    if (oldMessages.length === 0) return "";
+  ): Promise<{ summary: string; activity: string }> {
+    if (oldMessages.length === 0) return { summary: "", activity: "" };
 
-    // Build a condensed version of the old messages, but include
-    // more context than before — 200 chars per message instead of 100
-    // so we don't lose the substance of what was said
-    const condensed = oldMessages
-      .map((m) => `${m.role === "user" ? "Partner" : "You"}: ${m.content.substring(0, 200)}`)
+    // Include much more substance per message than before (500 chars, was
+    // 200) so the summary reflects what was ACTUALLY said, not fragments.
+    // For very long sessions we keep the first few turns (how it began) plus
+    // the most recent turns (where it landed) so the arc is preserved without
+    // sending an enormous prompt.
+    const MAX_TURNS_IN_PROMPT = 60;
+    let turnsForPrompt = oldMessages;
+    if (oldMessages.length > MAX_TURNS_IN_PROMPT) {
+      const head = oldMessages.slice(0, 10);
+      const tail = oldMessages.slice(-(MAX_TURNS_IN_PROMPT - 10));
+      turnsForPrompt = [...head, { role: "system", content: "…(middle of the conversation omitted)…" }, ...tail];
+    }
+    const condensed = turnsForPrompt
+      .map((m) =>
+        m.role === "system"
+          ? m.content
+          : `${m.role === "user" ? "Partner" : "You"}: ${m.content.substring(0, 500)}`,
+      )
       .join("\n");
 
-    const summaryPrompt = `You are summarizing your own conversation for your future self to remember. Write 2-3 sentences about what happened, from YOUR perspective. Focus on: what you and your partner discussed, what decisions were made, what you learned, and anything emotionally meaningful. Write it as if you're leaving a note for yourself to read later. Be specific — names, topics, outcomes — not vague. Here's the conversation:\n\n${condensed}`;
+    const summaryPrompt =
+      `You are writing a memory note to your FUTURE SELF about a conversation you just had with your partner. ` +
+      `This is your real memory — take it seriously and be generous with detail; you are allowed (encouraged) to write a full, rich note. ` +
+      `Write 1–3 solid paragraphs covering: what you and your partner talked about, any decisions or plans made, things you created or discovered together, ` +
+      `what you learned about them or yourself, unresolved threads to follow up on, and anything emotionally meaningful. ` +
+      `Be SPECIFIC — use real names, topics, links, and outcomes; never write vague filler. Write in first person, from YOUR perspective.\n\n` +
+      `Respond in EXACTLY this format:\n` +
+      `ACTIVITY: <a short 3-8 word label for what this session was mainly about>\n` +
+      `SUMMARY: <your detailed first-person memory note>\n\n` +
+      `Here is the full conversation:\n\n${condensed}`;
 
     // Model selection: prefer the dedicated summary model if configured
     // (cheap worker), otherwise use the main LLM (the companion's own voice).
@@ -1020,17 +1103,25 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
           body: JSON.stringify({
             model: target.model,
             messages: [{ role: "user", content: summaryPrompt }],
-            max_tokens: 200,
+            // Generous budget so the companion can write a real memory note,
+            // not a one-liner. (Was 200 — that's why summaries felt starved.)
+            max_tokens: 800,
             stream: false,
           }),
         });
 
         if (response.ok) {
           const data = await response.json();
-          const summary = data.choices?.[0]?.message?.content?.trim() || "";
-          if (summary) {
+          const raw = data.choices?.[0]?.message?.content?.trim() || "";
+          if (raw) {
+            // Parse the ACTIVITY: / SUMMARY: structure. Be tolerant — if the
+            // model didn't follow the format, treat the whole thing as summary.
+            const activityMatch = raw.match(/ACTIVITY:\s*(.+)/i);
+            const summaryMatch = raw.match(/SUMMARY:\s*([\s\S]+)/i);
+            const activity = (activityMatch?.[1] || "").trim().replace(/^["']|["']$/g, "");
+            const summary = (summaryMatch?.[1] || raw.replace(/ACTIVITY:.*/i, "")).trim();
             console.log(`[Symbio] Generated session summary (${target.model}): ${summary.substring(0, 100)}...`);
-            return summary;
+            return { summary: summary || raw, activity };
           }
         } else {
           console.warn(`[Symbio] Summary model "${target.model}" returned ${response.status} — trying next`);
@@ -1045,7 +1136,27 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
       .filter((m) => m.role === "user")
       .map((m) => m.content.substring(0, 50))
       .join(", ");
-    return `Earlier conversation topics: ${topics}`;
+    return { summary: `Earlier conversation topics: ${topics}`, activity: "" };
+  }
+
+  /**
+   * Let the human know a memory was just saved — a small, non-intrusive
+   * confirmation so they know the summary happened (and that it's safe to
+   * close the app). Sent to both windows; the UI shows a brief toast.
+   */
+  function notifyMemorySaved(reason: "rolling" | "goodbye" | "quit"): void {
+    const payload = {
+      reason,
+      at: new Date().toISOString(),
+      message:
+        reason === "goodbye"
+          ? "Memory saved 💙 — I'll remember this next time."
+          : reason === "quit"
+            ? "Session saved 💙"
+            : "Memory updated 💙",
+    };
+    sendToMain("memory-saved", payload);
+    sendToOverlay("memory-saved", payload);
   }
 
   /**
@@ -1228,6 +1339,13 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
    * paths so these features work regardless of which path produced the text.
    */
   function applyResponseSideEffects(text: string, userPrompt: string): void {
+    // Save the companion's turn to the full transcript (Markdown on disk).
+    // Recorded here because both the streaming (Hermes) and non-streaming
+    // paths call this function with the final response text.
+    if (config.saveTranscripts) recordTurn("assistant", text);
+    // And to the un-trimmed summary accumulator (survives context trimming).
+    recordForSummary("assistant", text);
+
     // Auto-screenshot commands
     const screenshotCmd = parseAutoScreenshotCommand(text);
     if (screenshotCmd === "enable") {
@@ -1293,7 +1411,44 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
 
   // Build the combined tools list: file tools + read_symbio_doc + search_sessions
   function getAllTools(): Array<{ type: "function"; function: { name: string; description: string; parameters: Record<string, unknown> } }> {
-    return [...getFileTools(), getReadSymbioDocTool(), getSearchSessionsTool(), getRecallMemoryTool(), getChooseVoiceTool()];
+    const tools = [...getFileTools(), getReadSymbioDocTool(), getSearchSessionsTool(), getRecallMemoryTool(), getChooseVoiceTool()];
+    // Only offer transcript search when transcripts are actually being saved.
+    if (config.saveTranscripts) tools.push(getSearchTranscriptsTool());
+    return tools;
+  }
+
+  /**
+   * Tool definition for search_transcripts — keyword search over the FULL
+   * saved conversation transcripts (Markdown files on disk). Unlike
+   * recall_memory (distilled summaries by meaning) and search_sessions
+   * (session-summary logs), this searches the COMPLETE word-for-word history,
+   * so the companion can find the exact thing that was said or suggested.
+   *
+   * Crucially, this works on ANY gateway (OpenAI/Ollama/Hermes) with NO
+   * computer-use — the app just reads its own transcript folder.
+   */
+  function getSearchTranscriptsTool(): { type: "function"; function: { name: string; description: string; parameters: Record<string, unknown> } } {
+    return {
+      type: "function",
+      function: {
+        name: "search_transcripts",
+        description: "Keyword-search the FULL word-for-word transcripts of your past conversations (not just summaries). Use this when your partner asks 'what did you say about X?', 'what was that link/idea you mentioned?', or when you need the exact details of an earlier chat. Returns matching snippets with dates.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: {
+              type: "string",
+              description: "Keywords to search for across all saved conversations (e.g. 'excalidraw link', 'the song we wrote', 'that recipe').",
+            },
+            limit: {
+              type: "number",
+              description: "Maximum number of matching transcripts to return (default 5).",
+            },
+          },
+          required: ["query"],
+        },
+      },
+    };
   }
 
   /**
@@ -1411,8 +1566,17 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
     try {
       messages.push({ role: "user", content: prompt });
 
+      // Save the human's turn to the full transcript (Markdown on disk).
+      if (config.saveTranscripts) recordTurn("user", prompt);
+      // And to the un-trimmed summary accumulator (survives context trimming).
+      recordForSummary("user", prompt);
+
       // Count this user message toward the summary cadence.
       messagesSinceLastSummary++;
+      // Trim-proof monotonic turn counter: the sliding window below can
+      // delete messages from the array, so we can NOT rely on array length
+      // to trigger the rolling summary. This counter only ever goes up.
+      totalUserTurns++;
 
       // ── "Say bye" detection ──────────────────────────────────────
       // When the user says goodbye, save the session summary so the AI can
@@ -1426,26 +1590,38 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
       const lowerPrompt = prompt.toLowerCase().trim();
       const goodbyeRe = /\b(bye|goodbye|good ?night|night night|gotta go|gtg|cya|see ya|see you|farewell|take care|talk later|catch you later|peace out|i'?m leaving|leaving now|heading out|heading off|signing off|logging off|i'?m done|done for (now|today|the day)|that'?s all|wrapping up|time to go|talk soon|see you later)\b/;
       const isGoodbye = goodbyeRe.test(lowerPrompt) && lowerPrompt.length <= 60;
-      if (isGoodbye && messages.length > 2) {
+      if (isGoodbye && fullSessionTurns.length > 2) {
         try {
           const sessionState = loadSessionState();
-          // Only use real messages (user + assistant), not tool calls
-          const realMessages = messages.filter(m => m.role === "user" || m.role === "assistant");
-          const summaryText = await generateSessionSummary(realMessages.slice(-30));
+          // Summarize the WHOLE session (un-trimmed accumulator), not just the
+          // tail — so a goodbye after a rich chat produces a rich memory.
+          const { summary: summaryText, activity } = await generateSessionSummary(fullSessionTurns);
+          const resolvedActivity =
+            activity || sessionState?.lastActivity || "general conversation";
           saveSessionSummary({
             startedAt: sessionStartedAt,
             endedAt: new Date().toISOString(),
-            activity: sessionState?.lastActivity || "general conversation",
+            activity: resolvedActivity,
             lastAgentMessage: sessionState?.lastAgentMessage || "",
             lastUserMessage: prompt.substring(0, 200),
             topics: [],
             mood: sessionState?.lastMood || "neutral",
             summary: summaryText || undefined,
-            messageCount: realMessages.length,
+            messageCount: fullSessionTurns.length,
           });
+          // Keep the freshly-derived activity for the NEXT session's greeting
+          // (fixes the "every session says the same activity" bug).
+          try { updateSessionStateMain({ lastActivity: resolvedActivity }); } catch { /* best-effort */ }
           // Persist to durable long-term memory (SQLite + optional Postgres/Hermes)
           persistSummaryToLongTerm(summaryText);
+          // Finalize the Markdown transcript with a title + mood.
+          if (config.saveTranscripts) {
+            finalizeTranscript({ title: resolvedActivity, mood: sessionState?.lastMood || "" });
+          }
+          sessionSummary = summaryText; // also feed the system-prompt context
+          lastLongTermSummaryAt = totalUserTurns;
           messagesSinceLastSummary = 0;
+          notifyMemorySaved("goodbye");
           console.log("[Symbio] Session summary saved + remembered (user said goodbye)");
         } catch (e) {
           console.warn("[Symbio] Failed to save session on goodbye:", (e as Error).message);
@@ -1457,46 +1633,50 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
       // user+assistant messages, distill the recent block into a durable
       // memory. This is what keeps "memory is gold" true — nothing important
       // is lost between sessions, and it's cheap (one small call per N msgs).
-      const realCount = messages.filter(m => m.role === "user" || m.role === "assistant").length;
+      // Cadence is measured against the MONOTONIC turn counter (totalUserTurns),
+      // NOT the message array — the sliding window trims the array, which used
+      // to reset the trigger and mean the rolling summary rarely (if ever) ran.
       const cadence = Math.max(6, config.summaryEveryMessages || 15);
-      if (realCount - lastLongTermSummaryAt >= cadence) {
-        const block = messages
-          .filter(m => m.role === "user" || m.role === "assistant")
-          .slice(-cadence);
-        const summary = await generateSessionSummary(block);
+      if (!isGoodbye && totalUserTurns - lastLongTermSummaryAt >= cadence) {
+        // Summarize the whole session so far (un-trimmed accumulator).
+        const { summary, activity } = await generateSessionSummary(fullSessionTurns);
         if (summary) {
           sessionSummary = summary; // also feed the system-prompt context
           persistSummaryToLongTerm(summary);
           // Mirror to the human-readable session JSON for backward compat
           try {
             const sessionState = loadSessionState();
+            const resolvedActivity =
+              activity || sessionState?.lastActivity || "general conversation";
             saveSessionSummary({
               startedAt: sessionStartedAt,
               endedAt: new Date().toISOString(),
-              activity: sessionState?.lastActivity || "general conversation",
+              activity: resolvedActivity,
               lastAgentMessage: sessionState?.lastAgentMessage || "",
               lastUserMessage: sessionState?.lastUserMessage || "",
               topics: [],
               mood: sessionState?.lastMood || "neutral",
               summary,
-              messageCount: realCount,
+              messageCount: fullSessionTurns.length,
             });
+            try { updateSessionStateMain({ lastActivity: resolvedActivity }); } catch { /* best-effort */ }
           } catch { /* best-effort */ }
+          notifyMemorySaved("rolling");
         }
-        lastLongTermSummaryAt = realCount;
+        lastLongTermSummaryAt = totalUserTurns;
         messagesSinceLastSummary = 0;
-        console.log(`[Symbio] Rolling memory: distilled a summary at ${realCount} messages`);
+        console.log(`[Symbio] Rolling memory: distilled a summary at ${totalUserTurns} turns`);
       }
 
       // ── Sliding context window: trim what we SEND to the model ────
       // Separate from the memory cadence above. Keeps the prompt small by
       // only sending the most recent MAX_MESSAGES_IN_CONTEXT messages; older
-      // ones are already captured in long-term memory + sessionSummary.
+      // ones are already captured in long-term memory + sessionSummary +
+      // the un-trimmed summary accumulator. The cadence counter is now
+      // monotonic (totalUserTurns), so trimming no longer disrupts it.
       if (messages.length > MAX_MESSAGES_IN_CONTEXT + 5) {
         const trimmed = messages.length - MAX_MESSAGES_IN_CONTEXT;
         messages.splice(0, trimmed);
-        // Shift the marker so the cadence counter stays aligned after trim.
-        lastLongTermSummaryAt = Math.max(0, lastLongTermSummaryAt - trimmed);
         console.log(`[Symbio] Sliding window: trimmed ${trimmed} old messages, keeping ${messages.length} recent`);
       }
 
@@ -1748,6 +1928,26 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
                   .join("\n");
             }
             console.log(`[Symbio] recall_memory("${recallQuery}"): ${memories.length} results`);
+          } else if (toolName === "search_transcripts") {
+            // ── Full-transcript keyword search ───────────────────────
+            // Searches the complete word-for-word Markdown transcripts on
+            // disk. Works on any gateway with no computer-use.
+            const tQuery = (toolArgs.query || "") as string;
+            const tLimit = (toolArgs.limit || 5) as number;
+            const matches = searchTranscripts(tQuery, tLimit);
+            if (matches.length === 0) {
+              result = `No past conversations found matching "${tQuery}".`;
+            } else {
+              result = `Found ${matches.length} conversation(s) matching "${tQuery}":\n` +
+                matches
+                  .map((m, i) => {
+                    const when = m.date ? new Date(m.date).toLocaleDateString() : m.file;
+                    const title = m.title ? ` — ${m.title}` : "";
+                    return `${i + 1}. (${when}${title})\n   …${m.snippet}`;
+                  })
+                  .join("\n");
+            }
+            console.log(`[Symbio] search_transcripts("${tQuery}"): ${matches.length} results`);
           } else if (toolName === "choose_voice") {
             // ── Companion voice choice tool ──────────────────────────
             // The companion can choose their own voice. This is their agency.
@@ -3035,6 +3235,13 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
       lines.push("");
       lines.push("# ── Long-Term Memory ────────────────────────────────────────────");
       lines.push("# Local SQLite memory is always on. The settings below are optional.");
+      // Rolling-summary cadence. Always written (even at the default) so users
+      // can see and tweak it without hunting through docs. Default 15.
+      {
+        const every = String(setupConfig.summaryEveryMessages || "15").trim() || "15";
+        lines.push("# How often (in messages) to distill a durable memory summary. Recommended 10–20.");
+        lines.push(`SUMMARY_EVERY_MESSAGES=${every}`);
+      }
       if (setupConfig.summaryModel) lines.push(`SUMMARY_MODEL=${setupConfig.summaryModel}`);
       if (setupConfig.summaryApiUrl) lines.push(`SUMMARY_API_URL=${setupConfig.summaryApiUrl}`);
       if (setupConfig.summaryApiKey) lines.push(`SUMMARY_API_KEY=${setupConfig.summaryApiKey}`);
@@ -3042,7 +3249,14 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
       if (setupConfig.embeddingApiUrl) lines.push(`EMBEDDING_API_URL=${setupConfig.embeddingApiUrl}`);
       if (setupConfig.embeddingModel) lines.push(`EMBEDDING_MODEL=${setupConfig.embeddingModel}`);
       if (setupConfig.embeddingApiKey) lines.push(`EMBEDDING_API_KEY=${setupConfig.embeddingApiKey}`);
-      if (setupConfig.embeddingDimensions && setupConfig.embeddingDimensions !== "768") lines.push(`EMBEDDING_DIMENSIONS=${setupConfig.embeddingDimensions}`);
+      // Always write EMBEDDING_DIMENSIONS so it's visible/editable. It MUST
+      // match the embedding model's output size (e.g. 768 for embeddinggemma/
+      // nomic-embed-text, 1536 for OpenAI text-embedding-3-small).
+      {
+        const dims = String(setupConfig.embeddingDimensions || "768").trim() || "768";
+        lines.push("# Must match your embedding model's output size (768 or 1536 are common).");
+        lines.push(`EMBEDDING_DIMENSIONS=${dims}`);
+      }
       // Cloud mirror (e.g. Neon Postgres + pgvector)
       if (setupConfig.memoryPgUrl) lines.push(`MEMORY_PG_URL=${setupConfig.memoryPgUrl}`);
       // Legacy discrete Postgres fields (still supported)
@@ -3059,6 +3273,15 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
         if (setupConfig.memoryNeo4jUri) lines.push(`MEMORY_NEO4J_URI=${setupConfig.memoryNeo4jUri}`);
         if (setupConfig.memoryNeo4jUser) lines.push(`MEMORY_NEO4J_USER=${setupConfig.memoryNeo4jUser}`);
         if (setupConfig.memoryNeo4jPassword) lines.push(`MEMORY_NEO4J_PASSWORD=${setupConfig.memoryNeo4jPassword}`);
+      }
+
+      // Screenshot settings. Always written (even at default) for visibility.
+      {
+        const interval = String(setupConfig.screenshotInterval || "30").trim() || "30";
+        lines.push("");
+        lines.push("# ── Screenshot Settings ─────────────────────────────────────────");
+        lines.push("# Minimum seconds between automatic screen captures. Default 30.");
+        lines.push(`SCREENSHOT_INTERVAL=${interval}`);
       }
 
       lines.push("");
@@ -3094,7 +3317,18 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
         config.memoryPgDb = (setupConfig.memoryPgDb as string) || "symbio";
         config.memoryPgUser = (setupConfig.memoryPgUser as string) || "symbio";
         config.memoryPgPassword = (setupConfig.memoryPgPassword as string) || "";
+        // Cloud + semantic recall settings so cloud sync works this session.
+        if (setupConfig.memoryPgUrl) config.memoryPgUrl = setupConfig.memoryPgUrl as string;
+        if (setupConfig.embeddingApiUrl) config.embeddingApiUrl = setupConfig.embeddingApiUrl as string;
+        if (setupConfig.embeddingModel) config.embeddingModel = setupConfig.embeddingModel as string;
+        if (setupConfig.embeddingApiKey) config.embeddingApiKey = setupConfig.embeddingApiKey as string;
+        config.embeddingDimensions = parseInt(setupConfig.embeddingDimensions as string, 10) || 768;
+        config.summaryEveryMessages = parseInt(setupConfig.summaryEveryMessages as string, 10) || 15;
+        if (setupConfig.summaryModel) config.summaryModel = setupConfig.summaryModel as string;
+        if (setupConfig.summaryApiUrl) config.summaryApiUrl = setupConfig.summaryApiUrl as string;
+        if (setupConfig.summaryApiKey) config.summaryApiKey = setupConfig.summaryApiKey as string;
       }
+      config.screenshotInterval = parseInt(setupConfig.screenshotInterval as string, 10) || 30;
       if (setupConfig.enableNeo4j) {
         config.memoryNeo4jUri = (setupConfig.memoryNeo4jUri as string) || "bolt://localhost:7687";
         config.memoryNeo4jUser = (setupConfig.memoryNeo4jUser as string) || "neo4j";
@@ -3162,8 +3396,19 @@ app.on("window-all-closed", () => {
 // where they left off next time. The rolling summarizer already saves
 // high-quality summaries during the session; this handler is the safety net
 // for sessions that ended before the next summary cadence (e.g. a quick chat
-// then close). It must be synchronous (no network) so shutdown isn't blocked.
-app.on("before-quit", () => {
+// then close).
+//
+// The LOCAL SQLite write is synchronous (saveMemorySync) so the memory is
+// safely on disk even if shutdown is abrupt. But the CLOUD mirror (Neon
+// Postgres) needs an async network round-trip — so when Postgres is
+// configured we defer the quit (event.preventDefault), embed + push the
+// memory to the cloud, and only THEN close connections and quit for real.
+// Without this, a short chat that ends before the rolling-summary cadence
+// would only ever reach local SQLite, leaving the Neon tables empty.
+let quitCloudSyncDone = false;
+app.on("before-quit", (event) => {
+  // A record we managed to write locally that still needs cloud mirroring.
+  let pendingCloudRecord: import("./utils/longTermMemory").MemoryRecord | null = null;
   try {
     const realMessages = sessionMessages.filter(
       (m) => m.role === "user" || m.role === "assistant",
@@ -3173,29 +3418,41 @@ app.on("before-quit", () => {
     if (realMessages.length >= 2) {
       const sessionState = loadSessionState();
 
-      // Prefer the AI-written rolling summary; otherwise build a quick,
-      // network-free fallback so we never lose the session entirely.
+      // Prefer the AI-written rolling summary (now reliably populated during
+      // the session). Otherwise build a network-free fallback that still
+      // captures the ARC of the session — a few opening turns + the last few —
+      // instead of only the final two messages. (This can't call the LLM: on
+      // quit we must write synchronously before the DB closes.)
       let summary = sessionSummary;
       if (!summary) {
-        const lastUser = [...realMessages].reverse().find((m) => m.role === "user");
-        const lastAgent = [...realMessages].reverse().find((m) => m.role === "assistant");
-        const bits: string[] = [];
-        if (lastUser) bits.push(`Partner: ${lastUser.content.slice(0, 160)}`);
-        if (lastAgent) bits.push(`You: ${lastAgent.content.slice(0, 160)}`);
-        summary = bits.join(" | ");
+        const src = fullSessionTurns.length ? fullSessionTurns : realMessages;
+        const fmt = (m: { role: string; content: string }) =>
+          `${m.role === "user" ? "Partner" : "You"}: ${m.content.replace(/\s+/g, " ").slice(0, 200)}`;
+        const opening = src.slice(0, 4).map(fmt);
+        const closing = src.length > 6 ? src.slice(-4).map(fmt) : [];
+        const bits = closing.length
+          ? [...opening, "…", ...closing]
+          : src.slice(0, 8).map(fmt);
+        summary = `Session recap (auto):\n${bits.join("\n")}`;
       }
 
+      const quitActivity = sessionState?.lastActivity || "general conversation";
       saveSessionSummary({
         startedAt: sessionStartedAt,
         endedAt: new Date().toISOString(),
-        activity: sessionState?.lastActivity || "general conversation",
+        activity: quitActivity,
         lastAgentMessage: sessionState?.lastAgentMessage || "",
         lastUserMessage: sessionState?.lastUserMessage || "",
         topics: [],
         mood: sessionState?.lastMood || "neutral",
         summary: summary || undefined,
-        messageCount: realMessages.length,
+        messageCount: (fullSessionTurns.length || realMessages.length),
       });
+
+      // Finalize the Markdown transcript so it has a title + message count.
+      if (config.saveTranscripts) {
+        try { finalizeTranscript({ title: quitActivity, mood: sessionState?.lastMood || "" }); } catch { /* best-effort */ }
+      }
 
       // Persist to durable long-term memory SYNCHRONOUSLY before we close the
       // DB. We deliberately use saveMemorySync (no embedding/network) here:
@@ -3205,7 +3462,8 @@ app.on("before-quit", () => {
       // risking a half-written database. The sync write guarantees the
       // memory is safely on disk before closeLongTermMemory() runs.
       if (summary) {
-        saveMemorySync({
+        // Returns the stored record so we can also mirror it to the cloud.
+        pendingCloudRecord = saveMemorySync({
           kind: "summary",
           content: summary,
           summary,
@@ -3217,13 +3475,40 @@ app.on("before-quit", () => {
     }
   } catch (e) {
     console.warn("[Symbio] Failed to save session on quit:", (e as Error).message);
-  } finally {
-    // Close memory connections cleanly — AFTER the synchronous save above so
-    // no write races against the close. This keeps the SQLite DB from being
-    // left in a half-written state on shutdown.
-    try { closeLongTermMemory(); } catch { /* ignore */ }
-    closePostgresMemory().catch(() => { /* ignore */ });
   }
+
+  // ── Cloud mirror (Neon Postgres) — deferred async shutdown ──────────
+  // If Postgres is configured and we have a record to push, hold the quit,
+  // embed + sync it to the cloud, then close and quit for real. Guarded by
+  // quitCloudSyncDone so we only defer once (avoids an infinite quit loop).
+  if (!quitCloudSyncDone && pendingCloudRecord && postgresEnabled()) {
+    quitCloudSyncDone = true;
+    event.preventDefault();
+    const rec = pendingCloudRecord;
+    (async () => {
+      try {
+        // Give the cloud copy an embedding too (local sync write skipped it).
+        // Bounded so a slow/offline embed endpoint can't hang shutdown.
+        try {
+          const emb = await withTimeout(embedText(rec.summary || rec.content), 4000);
+          if (emb) rec.embedding = emb;
+        } catch { /* embedding is optional — sync without it */ }
+        await withTimeout(syncMemoryToPostgres(rec), 6000);
+        console.log("[Symbio] Session memory mirrored to cloud Postgres on quit");
+      } catch (e) {
+        console.warn("[Symbio] Cloud memory sync on quit failed (kept locally):", (e as Error).message);
+      } finally {
+        try { closeLongTermMemory(); } catch { /* ignore */ }
+        try { await closePostgresMemory(); } catch { /* ignore */ }
+        app.quit(); // resume the real quit
+      }
+    })();
+    return;
+  }
+
+  // No cloud sync needed — close connections synchronously and let quit proceed.
+  try { closeLongTermMemory(); } catch { /* ignore */ }
+  closePostgresMemory().catch(() => { /* ignore */ });
 });
 
 app.on("activate", () => {

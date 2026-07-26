@@ -233,6 +233,19 @@ contextBridge.exposeInMainWorld("symbioAPI", {
     return onIpc("agent-busy", handler);
   },
 
+  // A memory/session summary was just saved — drives a brief "Memory saved 💙"
+  // toast so the human knows their conversation was remembered (and that it's
+  // safe to close the app).
+  onMemorySaved: (
+    callback: (data: { reason: "rolling" | "goodbye" | "quit"; at: string; message: string }) => void,
+  ) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { reason: "rolling" | "goodbye" | "quit"; at: string; message: string },
+    ) => callback(data);
+    return onIpc("memory-saved", handler);
+  },
+
   // Streaming partial text — DISPLAY ONLY. Updates the on-screen response
   // live as the agent streams, WITHOUT triggering TTS or animations (those
   // fire once on the final "generated-text"). Prevents the multi-TTS-call

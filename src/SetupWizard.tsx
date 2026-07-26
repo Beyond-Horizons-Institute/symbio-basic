@@ -69,6 +69,10 @@ interface SetupConfig {
   summaryModel: string;
   summaryApiUrl: string;
   summaryApiKey: string;
+  // How often (in messages) to distill a rolling memory summary. Default 15.
+  summaryEveryMessages: string;
+  // How often (in seconds) the companion may auto-capture the screen. Default 30.
+  screenshotInterval: string;
 }
 
 const STEPS = [
@@ -146,6 +150,8 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
     summaryModel: "",
     summaryApiUrl: "",
     summaryApiKey: "",
+    summaryEveryMessages: "15",
+    screenshotInterval: "30",
   });
 
   const updateConfig = (field: keyof SetupConfig, value: string | boolean) => {
@@ -731,6 +737,16 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                     Most LLMs (GPT-5.5, Gemini 2.5, Claude) already have vision built in — they analyze screenshots directly. This is only a fallback if your main LLM can't see images. Leave as "Use main LLM" unless you need a separate vision model.
                   </FormHelperText>
                 </FormControl>
+                <TextField
+                  label="Screenshot interval (seconds)"
+                  value={config.screenshotInterval}
+                  onChange={(e) => updateConfig("screenshotInterval", e.target.value.replace(/[^0-9]/g, ""))}
+                  placeholder="30"
+                  fullWidth
+                  sx={{ mt: 2, ...fieldStyle }}
+                  slotProps={{ input: { inputMode: "numeric" } }}
+                  helperText="Minimum seconds between automatic screen captures when your companion wants to see the screen. Lower = more responsive but more API usage. Default 30."
+                />
               </Paper>
 
               <Typography variant="caption" color={symbioColors.silver.dark}>
@@ -798,6 +814,19 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                     ✅ Add an embedding model below for meaning-based recall.
                   </Typography>
                 </Paper>
+              )}
+
+              {config.enableMemory && (
+                <TextField
+                  label="Summarize every N messages"
+                  value={config.summaryEveryMessages}
+                  onChange={(e) => updateConfig("summaryEveryMessages", e.target.value.replace(/[^0-9]/g, ""))}
+                  placeholder="15"
+                  helperText="How often your companion distills the conversation into a durable memory. Recommended 10–20. Default 15."
+                  fullWidth
+                  sx={fieldStyle}
+                  slotProps={{ input: { inputMode: "numeric" } }}
+                />
               )}
 
               {/* ── Optional memory upgrades ────────────────────────── */}

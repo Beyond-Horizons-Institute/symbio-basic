@@ -298,7 +298,13 @@ export async function saveMemory(input: {
  * (reading 'prepare')"). This writes the row immediately and synchronously
  * (no embedding, no Postgres) so the memory is safely persisted before the
  * connection closes. The memory is still searchable via keyword/recency; it
- * just won't have a vector until re-embedded later. Returns true on success.
+ * just won't have a vector until re-embedded later.
+ *
+ * Returns the stored record (or null on failure). The caller can hand that
+ * record to `syncMemoryToPostgres()` and AWAIT it during shutdown so the
+ * cloud mirror (e.g. Neon) also receives the memory before the app exits.
+ * (A quick chat that ends before the rolling-summary cadence would otherwise
+ *  only ever land in local SQLite, leaving the cloud tables empty.)
  */
 export function saveMemorySync(input: {
   kind: MemoryKind;
@@ -307,8 +313,8 @@ export function saveMemorySync(input: {
   topics?: string[] | string;
   importance?: number;
   sessionId?: string;
-}): boolean {
-  if (!db) return false;
+}): MemoryRecord | null {
+  if (!db) return null;
   try {
     const rec: MemoryRecord = {
       id: makeId(),
@@ -332,10 +338,10 @@ export function saveMemorySync(input: {
       sessionId: rec.sessionId ?? null,
       embedding: null,
     });
-    return true;
+    return rec;
   } catch (e) {
     console.warn("[Symbio] saveMemorySync failed:", (e as Error).message);
-    return false;
+    return null;
   }
 }
 
