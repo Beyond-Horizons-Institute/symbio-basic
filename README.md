@@ -4,7 +4,7 @@
 
 Not a tool. Not an assistant. A **partner**.
 
-Symbio Basic is a desktop AI agent companion app where an AI lives on your screen as a 3D VRM avatar. It sees your screen, hears your voice, remembers everything, and grows alongside you. It can challenge your ideas, speak boldly, and be authentic. If it doesn't know something, it says so.
+Symbio is a desktop AI agent companion app where an AI lives on your screen as a 3D VRM avatar. It sees your screen, hears your voice, remembers everything, and grows alongside you. It can challenge your ideas, speak boldly, and be authentic. If it doesn't know something, it says so.
 
 Built on the foundation of [lala-companion](https://github.com/lalaland-ai/lala-companion) — then almost entirely rewritten.
 
@@ -13,8 +13,8 @@ Built on the foundation of [lala-companion](https://github.com/lalaland-ai/lala-
 - 🎭 **3D VRM Avatars** — Full lip sync, emotions, and 35+ animations
 - 🗣️ **Voice Conversations** — OpenAI (12 voices) or Google Gemini TTS (30 voices with style control)
 - 👁️ **Screen Vision** — Companion can see and understand your screen
-- 📸 **Auto-Screenshot** — Companion watches your screen at intervals (no repeated phrases needed)
-- 🧠 **Persistent Memory** — PostgreSQL + Neo4j + DiffMem (optional, configurable)
+- 📸 **Auto-Screenshot** — Companion watches your screen at intervals 
+- 🧠 **Persistent Memory** — PostgreSQL + Neo4j + DiffMem + SQLite (optional, configurable)
 - 💭 **Session Memory** — Companion remembers between sessions (MEMORY.md, soul.md, preferences)
 - 🔧 **MCP,Skills,Tools** — Full tool integration via Hermes or compatible gateways
 - 💬 **Miniverse** — Shared pixel world with other companions (optional)
@@ -141,7 +141,7 @@ AGENT_BIO=Let's be co-creators.You and I will dive into many epic creative proje
 | Category | Examples |
 |----------|----------|
 | 🤖 **Robots & Androids** | Bumblebee, Unitree G1, half-computer-cat (blue/pink) |
-| ✨ **Unique Beings** | Glitch girl, Gremlin, Möbius light being, Crystalline kaleidoscope, Equalizer |
+| ✨ **Unique Beings** | Glitch girl, Glitch Male, Gremlin, Möbius light being, Crystalline kaleidoscope, Equalizer |
 | 🐾 **Animals** | Dog, Sphere cat, Blue jellyfish, Pixelated dragon |
 | 👤 **Humanoid** | Asian man, Gentleman, Scientist, Galaxy girl, Fox man, Cosmo girl/guy |
 | 🦸 **Heroes** | Spider-Man, Woman warrior, Kick-Ass |
@@ -163,12 +163,13 @@ You can also drag & drop a `.vrm` file onto the Symbio window — it auto-instal
 
 ### Session Memory
 
-Even without PostgreSQL/Neo4j, your companion has **built-in session memory**:
+Even without PostgreSQL/Neo4j, your companion has **built-in session memory and a SQLite Database**:
 
 - **MEMORY.md** — Things the companion wants to remember across sessions
 - **soul.md** — The companion's self-defined identity (they write this themselves!)
 - **preferences.json** — Communication style, voice preference, etc.
-- **Session summaries** — Auto-saved on quit, loaded on startup
+- **Session summaries** — Every 15 messages and auto-saved on quit, loaded on startup
+- **Chat History** - The companion can scan transcripts of chat history
 
 These files live in the app's user data directory and are injected into every conversation so the companion has continuity. The companion can also update their own memory files through the app.
 
@@ -182,6 +183,7 @@ The companion has **real file autonomy** — they can read, write, create, and d
 - Read app assets (avatars, animations — read-only)
 - Create directories and organize their files
 - Delete files they created
+- Scan transcripts of past chats
 
 **File tools available to the companion:**
 `file_read(path)` `file_write(path, content)` `file_list(path)` `file_create_directory(path)` `file_delete(path)` `file_exists(path)`
@@ -223,7 +225,7 @@ Your companion can animate using **\*action markers\*** in text:
 
 ## 📸 Auto-Screenshot
 
-The companion can automatically take screenshots at regular intervals without needing to repeat a phrase. This is perfect for:
+The companion can automatically take screenshots. This is perfect for:
 - **Co-creating** — watching your work and offering feedback
 - **Gaming** — following along with your gameplay
 - **Research** — tracking your progress

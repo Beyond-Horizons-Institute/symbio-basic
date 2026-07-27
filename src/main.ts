@@ -358,6 +358,12 @@ function recordForSummary(role: "user" | "assistant", content: string): void {
 // call a tool. Refreshed each user message.
 let recalledMemories: string[] = [];
 
+// True until the first proactive recall of a sitting runs. On that first
+// recall we also fold in a couple of recent, meaningful memories so the
+// companion opens warmly ("I remember us"), not just topically. Reset to
+// true whenever a new sitting begins (see the window 'ready'/new-session path).
+let isFirstRecallOfSitting = true;
+
 // ── Symbio: Voice choice parser ──────────────────────────────────────
 // Parses natural language voice choice from the companion's text.
 // Works like parseAvatarChoice — the companion can say things like:
@@ -993,6 +999,15 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
 - companion-sandbox/ — your private workspace for any files
 - memory/ — your memory files (MEMORY.md, soul.md, preferences.json)
 - assets/avatars/ — available avatar files (read-only)`;
+
+    // ── Transcript location (only if transcripts are on) ─────────────
+    // Tell the companion WHERE its full word-for-word chat history lives on
+    // disk, so it knows it can revisit past conversations — via the
+    // search_transcripts() tool, or by reading the Markdown files directly.
+    const tDir = getTranscriptDir();
+    if (tDir) {
+      prompt += `\n- ${tDir} — your FULL chat transcripts, one Markdown file per session. Use search_transcripts("keywords") to search them for anything ever said. See read_symbio_doc("skills") for details.`;
+    }
 
     return prompt;
   }
@@ -1684,14 +1699,51 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
       // Search long-term memory for things relevant to what the partner
       // just said, and inject them into the system prompt. Best-effort:
       // if recall fails or finds nothing, the turn proceeds normally.
+      //
+      // Warmth polish: on the FIRST turn of a sitting we also fold in a
+      // couple of recent, meaningful memories (not just query-matched ones),
+      // so the companion opens like it genuinely remembers you — "oh, hey,
+      // I remember us" — instead of a cold, purely-topical open. Later turns
+      // stay query-focused to keep the context tight and on-topic.
       try {
         const recalled = await recallMemories(prompt, 4);
         // Only surface reasonably relevant hits to avoid noise.
-        recalledMemories = recalled
+        const relevant = recalled
           .filter((m) => m.score >= 0.3)
           .map((m) => (m.summary || m.content).slice(0, 240));
+
+        let warmup: string[] = [];
+        if (isFirstRecallOfSitting) {
+          isFirstRecallOfSitting = false;
+          try {
+            // Recent memories, most meaningful first, de-duplicated against
+            // whatever the query already surfaced.
+            const recent = recentMemories(6)
+              .sort((a, b) => (b.importance ?? 0.5) - (a.importance ?? 0.5))
+              .slice(0, 2)
+              .map((m) => (m.summary || m.content).slice(0, 240));
+            const seen = new Set(relevant);
+            warmup = recent.filter((m) => m && !seen.has(m));
+          } catch {
+            warmup = [];
+          }
+        }
+
+        // Query-matched memories first (most on-topic), then warmup, capped.
+        const merged: string[] = [];
+        const dedupe = new Set<string>();
+        for (const m of [...relevant, ...warmup]) {
+          if (m && !dedupe.has(m)) {
+            dedupe.add(m);
+            merged.push(m);
+          }
+        }
+        recalledMemories = merged.slice(0, 5);
         if (recalledMemories.length > 0) {
-          console.log(`[Symbio] Recalled ${recalledMemories.length} memories for this turn`);
+          console.log(
+            `[Symbio] Recalled ${recalledMemories.length} memories for this turn` +
+              (warmup.length ? ` (incl. ${warmup.length} warmup)` : ""),
+          );
         }
       } catch {
         recalledMemories = [];
@@ -3490,7 +3542,7 @@ app.on("before-quit", (event) => {
         // Give the cloud copy an embedding too (local sync write skipped it).
         // Bounded so a slow/offline embed endpoint can't hang shutdown.
         try {
-          const emb = await withTimeout(embedText(rec.summary || rec.content), 4000);
+          const emb = await withTimeout(embedText(rec.summary || rec.content, "document"), 4000);
           if (emb) rec.embedding = emb;
         } catch { /* embedding is optional — sync without it */ }
         await withTimeout(syncMemoryToPostgres(rec), 6000);

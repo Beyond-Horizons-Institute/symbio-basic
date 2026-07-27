@@ -148,6 +148,17 @@ export interface SymbioConfig {
   embeddingApiKey: string;
   embeddingDimensions: number;
 
+  // Some embedding models are ASYMMETRIC: they expect a different prefix
+  // for a stored memory (a "document") than for a search (a "query").
+  // Matching those prefixes noticeably sharpens recall. Options:
+  //   "auto"   — detect from the model name (recommended default)
+  //   "none"   — no prefixes (OpenAI text-embedding-3-*, most models)
+  //   "nomic"  — nomic-embed-text (search_document: / search_query:)
+  //   "gemma"  — embeddinggemma (title: none | text: / task: search result | query:)
+  // "auto" is safe for every model — it only adds prefixes when it
+  // recognizes a model that wants them, and is a no-op otherwise.
+  embeddingPrefixStyle: string;
+
   // Summarizer model — who writes the rolling session summaries.
   // Empty = use the main LLM (most authentic, the companion's own voice).
   // Set a small/cheap model here to save cost; it becomes the worker,
@@ -292,6 +303,8 @@ export function loadConfig(): SymbioConfig {
     // OPENAI_API_KEY get semantic memory for free with no extra config.
     embeddingApiKey: getEnv("EMBEDDING_API_KEY", "") || getEnv("OPENAI_API_KEY", ""),
     embeddingDimensions: getEnvInt("EMBEDDING_DIMENSIONS", 768),
+    // Default "auto": detect gemma/nomic from the model name, no-op for the rest.
+    embeddingPrefixStyle: getEnv("EMBEDDING_PREFIX_STYLE", "auto").toLowerCase(),
 
     summaryModel: getEnv("SUMMARY_MODEL", ""),
     summaryApiUrl: getEnv("SUMMARY_API_URL", ""),

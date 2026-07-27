@@ -37,14 +37,67 @@ function resolveEmbeddingUrl(): string {
 }
 
 /**
+ * How a piece of text is being embedded:
+ *   "document" — a memory we're STORING (the thing to be found later)
+ *   "query"    — a search we're RUNNING (what we're looking for)
+ * Symmetric models ignore this; asymmetric ones recall much better with it.
+ */
+export type EmbedKind = "document" | "query";
+
+/**
+ * Resolve which prefix style to use for the configured model.
+ * "auto" inspects the model name so it "just works" without extra config.
+ * Anything unrecognized → "none" (a safe no-op for symmetric models).
+ */
+function resolvePrefixStyle(): "none" | "nomic" | "gemma" {
+  const style = (config.embeddingPrefixStyle || "auto").toLowerCase();
+  if (style === "none" || style === "nomic" || style === "gemma") return style;
+  // auto-detect from the model name
+  const model = (config.embeddingModel || "").toLowerCase();
+  if (model.includes("nomic")) return "nomic";
+  if (model.includes("gemma")) return "gemma"; // embeddinggemma
+  return "none";
+}
+
+/**
+ * Apply the model-appropriate task prefix to a piece of text. Asymmetric
+ * embedding models line up query and document vectors much better when the
+ * text is tagged with what it's for. This is a no-op for symmetric models
+ * (e.g. OpenAI text-embedding-3-*), so it never hurts recall — it only helps.
+ */
+function applyPrefix(text: string, kind: EmbedKind): string {
+  switch (resolvePrefixStyle()) {
+    case "nomic":
+      // nomic-embed-text asymmetric prefixes
+      return kind === "query" ? `search_query: ${text}` : `search_document: ${text}`;
+    case "gemma":
+      // embeddinggemma prompt format
+      return kind === "query"
+        ? `task: search result | query: ${text}`
+        : `title: none | text: ${text}`;
+    default:
+      return text;
+  }
+}
+
+/**
  * Embed a single piece of text. Returns a Float32 vector, or null if
  * embeddings are disabled or the request fails (caller falls back to
  * keyword search).
+ *
+ * `kind` tells asymmetric models whether this is a stored memory
+ * ("document", the default) or a live search ("query"). It's harmless for
+ * symmetric models, so callers can always pass the honest value.
  */
-export async function embedText(text: string): Promise<Float32Array | null> {
+export async function embedText(
+  text: string,
+  kind: EmbedKind = "document",
+): Promise<Float32Array | null> {
   if (!embeddingsEnabled()) return null;
   const clean = text.replace(/\s+/g, " ").trim();
   if (!clean) return null;
+
+  const prepared = applyPrefix(clean, kind);
 
   try {
     const res = await fetch(resolveEmbeddingUrl(), {
@@ -57,7 +110,7 @@ export async function embedText(text: string): Promise<Float32Array | null> {
       },
       body: JSON.stringify({
         model: config.embeddingModel,
-        input: clean,
+        input: prepared,
       }),
     });
 

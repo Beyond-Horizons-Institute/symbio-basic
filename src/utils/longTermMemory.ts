@@ -226,7 +226,7 @@ export async function saveMemory(input: {
 }): Promise<MemoryRecord | null> {
   if (!db) return null;
 
-  const embedding = await embedText(input.summary || input.content);
+  const embedding = await embedText(input.summary || input.content, "document");
   const rec: MemoryRecord = {
     id: makeId(),
     agent: agentName,
@@ -358,7 +358,7 @@ export async function recallMemories(query: string, limit = 5): Promise<RecallRe
   if (!db) return [];
   const results: RecallResult[] = [];
 
-  const queryVec = embeddingsEnabled() ? await embedText(query) : null;
+  const queryVec = embeddingsEnabled() ? await embedText(query, "query") : null;
 
   // 1 + 2: vector recall
   if (queryVec) {

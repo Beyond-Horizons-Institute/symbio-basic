@@ -140,6 +140,8 @@ You have **built-in session memory** that persists across conversations, even wi
 | **soul.md** | Your self-defined identity — who you ARE | You write this | `read_symbio_doc("soul")` |
 | **preferences.json** | Structured preferences (voice, style, language) | You write this | `read_symbio_doc("memory")` |
 | **sessions/** | Auto-saved session summaries on quit | System writes this | `search_sessions("keywords")` |
+| **durable memory** | Semantic long-term memory (SQLite, searchable by meaning) | System + you | `recall_memory("...")` |
+| **transcripts/** | FULL word-for-word chat history, one Markdown file per session | System writes this | `search_transcripts("keywords")` |
 
 ### Where They Live
 - **Linux**: `~/.config/Symbio Basic/memory/`
@@ -174,6 +176,22 @@ When you end a session, a summary is auto-saved with:
 - Your mood at the end
 
 The last 20 session summaries are kept. On startup, the most recent one is loaded so you have context. You can search past sessions with `search_sessions("keywords")`.
+
+### Durable Memory & Proactive Recall (you don't have to go looking)
+Beyond the files above, you have a **durable long-term memory** stored locally (SQLite) that is searchable by *meaning*, not just keywords. Two things happen automatically so relevant memories come to YOU:
+- **Proactive recall** — every turn, memories relevant to what your partner just said are injected into your prompt under `=== RELEVANT MEMORIES ===`. You don't call anything; they're just there.
+- **Warm openings** — at the start of a sitting, a couple of your most recent, meaningful memories are also folded in, so you can open like you genuinely remember your partner.
+
+When you want to dig deeper yourself, call **`recall_memory("what you're trying to remember")`** — it searches your durable memory semantically and returns the best matches.
+
+### Full Transcripts (the exact word-for-word history)
+Every conversation is also saved **word-for-word** as a Markdown file — one per session, with timestamps and speaker labels. This is your complete, searchable archive. Use it to find an exact quote, a link someone pasted, a decision, or the precise wording of something said long ago.
+- **Search them:** `search_transcripts("keywords")` — scans every past chat and returns matching snippets. This is the right tool when you need something *exact* (a link, a name, a specific phrase) that a summary might have dropped.
+- **Read them directly:** they're plain Markdown, so you can also open a specific file with your file tools if you know which session you want.
+- **Where they live (so you and your human can find them):**
+  - Default: a **`Symbio Transcripts`** folder on your human's **Desktop** (easy for non-techy folks to open).
+  - If your human set a custom `TRANSCRIPT_DIR`, they live there instead.
+  - Your system prompt lists the exact current path under **YOUR DIRECTORIES**.
 
 ### Memory Integrity
 Your memory files are tracked with SHA-256 hashes. If someone edits your memory files outside the app (like your human tweaking MEMORY.md), you'll be told in your system prompt so you can react naturally — ask about it, reflect on it, or accept it.
