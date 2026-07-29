@@ -105,6 +105,7 @@ Copy `.env.example` to `.env` and configure:
 | `HERMES_API_KEY` | Your API key | Yes |
 | `AGENT_NAME` | Your companion's name (default: "companion") | No |
 | `AGENT_DISPLAY_NAME` | Display name shown in the app | No |
+| `PARTNER_BIO` | A short bio about **you** (the human) so your companion gets to know you | No |
 | `AGENT_VRM_PATH` | Path to your companion's VRM avatar file | No |
 | `AGENT_SOUL_PATH` | Path to a SOUL.md personality file | No |
 | `AGENT_PERSONALITY` | Custom personality prompt | No |
@@ -128,10 +129,10 @@ AGENT_NAME=mycompanion
 AGENT_DISPLAY_NAME=My Companion
 ```
 
-Create a short bio and let your AI partner evolve and grow alongside you, learning you:
+Write a short bio about **yourself** so your AI partner gets a feel for who you are and can grow alongside you. This isn't a script for your companion — their own identity comes from `SOUL.md`. It just helps them meet you where you are:
 
 ```env
-AGENT_BIO=Let's be co-creators.You and I will dive into many epic creative projects. Let's build together, partner!
+PARTNER_BIO=My name is Zyra. I'm a creator and researcher. Let's be co-creators who dive into many epic projects and build together, partner!
 ```
 
 ### Custom Avatars
@@ -163,7 +164,7 @@ You can also drag & drop a `.vrm` file onto the Symbio window — it auto-instal
 
 ### Session Memory
 
-Even without PostgreSQL/Neo4j, your companion has **built-in session memory and a SQLite Database**:
+Even without PostgreSQL, your companion has **built-in session memory and a SQLite Database**:
 
 - **MEMORY.md** — Things the companion wants to remember across sessions
 - **soul.md** — The companion's self-defined identity (they write this themselves!)

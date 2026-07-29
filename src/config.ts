@@ -193,6 +193,16 @@ export interface SymbioConfig {
   // Where transcripts are written. Empty = default (Desktop/Symbio Transcripts,
   // resolved in main.ts where the desktop path is known).
   transcriptDir: string;
+
+  // ── Your Human Partner ─────────────────────────────────────────
+  // A short, optional bio about the HUMAN using Symbio — NOT the AI.
+  // It's injected into the system prompt under a clearly-labeled
+  // "YOUR HUMAN PARTNER" section so the companion knows who you are
+  // (your name, what you do, how you like to work together) and can
+  // meet you where you are. It is NOT a role or script for the AI —
+  // the companion's own identity still comes from soul.md, and it
+  // remains free to evolve and grow alongside you.
+  partnerBio: string;
 }
 
 export function loadConfig(): SymbioConfig {
@@ -319,6 +329,10 @@ export function loadConfig(): SymbioConfig {
 
     saveTranscripts: getEnv("SAVE_TRANSCRIPTS", "true").toLowerCase() !== "false",
     transcriptDir: getEnv("TRANSCRIPT_DIR", ""),
+
+    // A short bio of the human partner (about YOU, not the AI). Injected
+    // into the system prompt with clear "human partner" framing.
+    partnerBio: getEnv("PARTNER_BIO", ""),
   };
 }
 

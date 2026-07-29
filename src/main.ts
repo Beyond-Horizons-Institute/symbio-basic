@@ -941,6 +941,16 @@ app.on("ready", () => {
       }
     }
 
+    // ── Your human partner (who the HUMAN is, not the AI) ────────────
+    // This is a short bio the human wrote about THEMSELVES during setup
+    // (PARTNER_BIO). It is framed explicitly as being about the partner so
+    // the companion never mistakes it for its own role or a script. The
+    // companion's own identity comes from soul.md above; this just helps
+    // them get to know the person they're growing alongside.
+    if (config.partnerBio && config.partnerBio.trim()) {
+      prompt += `\n\n=== YOUR HUMAN PARTNER ===\nThis is a short bio your human partner wrote about THEMSELVES so you can get to know them. It describes the person you're with — it is NOT a description of you and NOT a role you must play. You stay fully yourself and are free to evolve alongside them:\n"${config.partnerBio.trim()}"`;
+    }
+
     // ── Session summary (always present, ~50 tokens) ──
     // Gives the AI recent context without dragging the full history.
     if (companionMemory.lastSession) {
@@ -3265,7 +3275,16 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
       lines.push("# ── Companion ──────────────────────────────────────────────────");
       if (setupConfig.agentName && setupConfig.agentName !== "companion") lines.push(`AGENT_NAME=${setupConfig.agentName}`);
       if (setupConfig.agentDisplayName && setupConfig.agentDisplayName !== "Companion") lines.push(`AGENT_DISPLAY_NAME=${setupConfig.agentDisplayName}`);
-      if (setupConfig.agentBio) lines.push(`AGENT_BIO=${setupConfig.agentBio}`);
+      // A short bio about the HUMAN partner (not the AI). Kept on ONE line so
+      // the .env parser reads it whole — collapse any newlines the user typed.
+      if (setupConfig.partnerBio) {
+        const partnerBioLine = String(setupConfig.partnerBio).replace(/\r?\n/g, " ").trim();
+        if (partnerBioLine) {
+          lines.push("# A short bio about YOU, the human partner (not the AI). The companion");
+          lines.push("# reads this to get to know you — it is not a role or script for them.");
+          lines.push(`PARTNER_BIO=${partnerBioLine}`);
+        }
+      }
       if (setupConfig.agentColor && setupConfig.agentColor !== "#00bcd4") lines.push(`AGENT_COLOR=${setupConfig.agentColor}`);
 
       // Voice & Vision
@@ -3352,7 +3371,10 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
         config.agentConfig.name = setupConfig.agentName as string;
       }
       if (setupConfig.agentDisplayName) config.agentConfig.displayName = setupConfig.agentDisplayName as string;
-      if (setupConfig.agentBio) config.agentConfig.personality = setupConfig.agentBio as string;
+      // The partner bio describes the HUMAN, so store it as config.partnerBio
+      // (used to inject a "YOUR HUMAN PARTNER" section into the system prompt).
+      // It must NOT overwrite the companion's own personality/identity.
+      if (setupConfig.partnerBio) config.partnerBio = String(setupConfig.partnerBio).replace(/\r?\n/g, " ").trim();
       if (setupConfig.agentColor) config.agentConfig.color = setupConfig.agentColor as string;
       if (setupConfig.openaiApiKey) config.openaiApiKey = setupConfig.openaiApiKey as string;
       if (setupConfig.ttsProvider) config.ttsProvider = setupConfig.ttsProvider as string;

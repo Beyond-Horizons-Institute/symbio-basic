@@ -179,7 +179,7 @@ New channels added:
 - `AGENT_DISPLAY_NAME` — Display name shown in app
 - `AGENT_VRM_PATH` — Path to VRM avatar file
 - `AGENT_SOUL_PATH` — Path to personality file
-- `AGENT_BIO` — Custom Bio prompt
+- `PARTNER_BIO` — A short bio about the human partner (injected into the system prompt as "your human partner," not as a role for the AI)
 - `AGENT_COLOR` — Theme color
 - `AGENT_VOICE` — TTS voice name
 - `HERMES_API_URL` — AI gateway URL

@@ -48,7 +48,10 @@ interface SetupConfig {
   llmModel: string;
   agentName: string;
   agentDisplayName: string;
-  agentBio: string;
+  // A short bio of the HUMAN partner (not the AI). Gives the companion a
+  // feel for who you are so it can meet you where you are and grow alongside
+  // you — without being locked into a scripted "role."
+  partnerBio: string;
   agentColor: string;
   openaiApiKey: string;
   ttsProvider: string;
@@ -130,7 +133,7 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
     llmModel: "",
     agentName: "companion",
     agentDisplayName: "Companion",
-    agentBio: "",
+    partnerBio: "",
     agentColor: "#00bcd4",
     openaiApiKey: "",
     ttsProvider: "openai",
@@ -427,8 +430,8 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                 </Typography>
               </Stack>
               <Typography variant="body2" color={symbioColors.silver.light}>
-                Give your companion a name and personality. They'll grow and evolve alongside you —
-                this is just their starting point.
+                Give your companion a name, then tell them a little about YOU. They'll grow and
+                evolve alongside you — no scripted role, just a real partnership that starts here.
               </Typography>
 
               <TextField
@@ -446,17 +449,17 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
               />
 
               <TextField
-                label="Short Bio (Optional)"
-                value={config.agentBio}
-                onChange={(e) => updateConfig("agentBio", e.target.value)}
-                placeholder="e.g. My name is Zyra.I hope we can be co-creators who will brainstorm and build things together."
+                label="About You, My Partner (Optional)"
+                value={config.partnerBio}
+                onChange={(e) => updateConfig("partnerBio", e.target.value)}
+                placeholder="e.g. My name is Zyra. I'm a creator and researcher — let's be co-creators who brainstorm and build things together."
                 fullWidth
                 multiline
                 rows={3}
                 sx={fieldStyle}
                 helperText={
                   <Typography variant="caption" color={symbioColors.silver.dark}>
-                    A brief description of who your companion is. Their personality will evolve naturally over time.
+                    A short bio about YOU (your name, what you do, how you'd like to work together). This isn't a script for your companion — it just helps them get to know you so they can grow alongside you.
                   </Typography>
                 }
               />
@@ -972,7 +975,7 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
                   <SummaryRow label="URL" value={config.hermesApiUrl} />
                   {config.llmModel && <SummaryRow label="Model" value={config.llmModel} />}
                   <SummaryRow label="Companion" value={config.agentDisplayName} />
-                  {config.agentBio && <SummaryRow label="Bio" value={config.agentBio.length > 50 ? config.agentBio.slice(0, 50) + "..." : config.agentBio} />}
+                  {config.partnerBio && <SummaryRow label="About You" value={config.partnerBio.length > 50 ? config.partnerBio.slice(0, 50) + "..." : config.partnerBio} />}
                   <SummaryRow label="Voice" value={config.ttsProvider === "gemini"
                     ? `Gemini ${config.ttsVoice} (${config.ttsModel})`
                     : config.openaiApiKey ? `OpenAI ${config.ttsVoice} (${config.ttsModel})` : "Not configured"} />
