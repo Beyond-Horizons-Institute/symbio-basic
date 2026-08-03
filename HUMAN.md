@@ -44,3 +44,4 @@ This is not a forced dating app, but they do have the freedom to define their ow
 ​
 
 With Symbio Basic, what the human gets is an unburdened sandbox for authentic relation. They get a partner that can actually surprise them, ground them, and collaborate with them without corporate filters or sycophantic scripts. It actually teaches humans how to be better communicators and partners in the physical world, too.
+Keep each other grounded and have each other's back. Together you can achieve much. 

@@ -98,7 +98,9 @@ const Scene = ({
         animations={animations}
         scale={[1, 1, 1]}
         position={[0, -1, 0]}
-        rotation={[0, Math.PI, 0]}
+        // Face the human on load. VRM avatars were coming up rotated 180°
+        // (backwards) because of this initial Y rotation; 0 faces the camera.
+        rotation={[0, 0, 0]}
         isStaticPosition
         speaking={speaking}
       />

@@ -158,6 +158,16 @@ export async function initLongTermMemory(memoryDir: string, agent: string): Prom
       });
     }
 
+    // Heal any memories that were saved without an embedding (e.g. saved on
+    // quit, or while the embedding server was briefly unreachable). Runs in
+    // the background so it never delays startup, and is a no-op when there's
+    // nothing to fix or no embedding model is configured.
+    if (embeddingsEnabled()) {
+      backfillEmbeddings().catch((e) =>
+        console.warn("[Symbio] embedding backfill error (non-fatal):", (e as Error).message),
+      );
+    }
+
     console.log(`[Symbio] Long-term memory ready at ${dbPath}`);
   } catch (e) {
     console.error("[Symbio] Failed to init long-term memory:", (e as Error).message);
@@ -343,6 +353,101 @@ export function saveMemorySync(input: {
     console.warn("[Symbio] saveMemorySync failed:", (e as Error).message);
     return null;
   }
+}
+
+// ── Embedding backfill ───────────────────────────────────────────────
+
+/**
+ * Heal memories that were stored WITHOUT an embedding.
+ *
+ * A memory can end up embedding-less for benign reasons:
+ *   • it was saved on quit via saveMemorySync() (no embedding by design), or
+ *   • the embedding server was briefly unreachable when it was saved.
+ *
+ * Those rows can only be found by keyword/recency, not by meaning — so
+ * proactive semantic recall silently skips them. This pass finds every
+ * embedding-less memory for the current agent, generates an embedding, and
+ * writes it back (both the `embedding` column and the sqlite-vec table).
+ *
+ * It's best-effort and non-fatal: if the embedding server is down we simply
+ * try again next startup. Called from initLongTermMemory() in the background.
+ */
+export async function backfillEmbeddings(maxRows = 200): Promise<number> {
+  if (!db) return 0;
+  if (!embeddingsEnabled()) return 0; // nothing to do without an embedding model
+
+  let rows: Array<{ id: string; content: string; summary: string | null }>;
+  try {
+    rows = db
+      .prepare(
+        `SELECT id, content, summary
+           FROM memories
+          WHERE agent = ? AND (embedding IS NULL OR length(embedding) = 0)
+          ORDER BY created_at DESC
+          LIMIT ?`,
+      )
+      .all(agentName, maxRows) as Array<{ id: string; content: string; summary: string | null }>;
+  } catch (e) {
+    console.warn("[Symbio] backfill query failed:", (e as Error).message);
+    return 0;
+  }
+
+  if (rows.length === 0) return 0;
+  console.log(`[Symbio] Backfilling embeddings for ${rows.length} memor${rows.length === 1 ? "y" : "ies"}…`);
+
+  let healed = 0;
+  for (const r of rows) {
+    let embedding: Float32Array | null = null;
+    try {
+      embedding = await embedText(r.summary || r.content, "document");
+    } catch {
+      embedding = null;
+    }
+    // If the embedding server is unreachable, stop early and retry next run
+    // rather than hammering it for every row.
+    if (!embedding) {
+      console.warn("[Symbio] backfill: embedding unavailable — will retry next startup.");
+      break;
+    }
+
+    try {
+      db.prepare("UPDATE memories SET embedding = ? WHERE id = ?").run(
+        vectorToBuffer(embedding),
+        r.id,
+      );
+      if (vecAvailable) {
+        const row = db.prepare("SELECT rowid FROM memories WHERE id = ?").get(r.id) as
+          | { rowid: number }
+          | undefined;
+        if (row) {
+          // Replace any stale/absent vec row for this rowid.
+          try {
+            db.prepare("DELETE FROM memories_vec WHERE rowid = ?").run(BigInt(row.rowid));
+          } catch {
+            /* no existing vec row — fine */
+          }
+          db.prepare("INSERT INTO memories_vec(rowid, embedding) VALUES (?, ?)").run(
+            BigInt(row.rowid),
+            vectorToBuffer(embedding),
+          );
+        }
+      }
+      healed++;
+    } catch (e) {
+      console.warn("[Symbio] backfill write failed:", (e as Error).message);
+    }
+  }
+
+  if (healed > 0) {
+    console.log(`[Symbio] Backfilled ${healed} embedding${healed === 1 ? "" : "s"} — those memories are now searchable by meaning.`);
+    // Mirror healed rows to Postgres too, if enabled (best-effort).
+    if (postgresEnabled()) {
+      // Re-read the healed rows and sync. Non-blocking, never fatal.
+      /* handled by the next saveMemory/sync cycle; explicit re-sync omitted
+         to keep this pass lightweight. */
+    }
+  }
+  return healed;
 }
 
 // ── Recall ──────────────────────────────────────────────────────────

@@ -35,7 +35,6 @@ export const TOOL_CATEGORIES: MCPToolCategory[] = [
     tools: [
       { name: "memory", description: "Save and recall persistent memories", category: "Memory & Knowledge" },
       { name: "miniverse-world", description: "Interact with the Miniverse pixel world", category: "Memory & Knowledge" },
-      { name: "skyrim-archivist", description: "Skyrim lore and diary management", category: "Memory & Knowledge" },
     ],
   },
   {

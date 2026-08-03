@@ -438,16 +438,22 @@ const GEMINI_VOICE_NAMES = ["zephyr", "puck", "charon", "kore", "fenrir", "leda"
 const OPENAI_VOICE_NAMES = ["alloy", "ash", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer", "verse", "marin", "cedar"];
 
 function extractVoiceName(lower: string): { name: string; provider: string } | null {
-  // Check Gemini voices first (more unique names)
+  // Check Gemini voices first (more unique names).
+  // Gemini voice IDs ARE capitalized (e.g. "Ash", "Puck", "Kore"), so we
+  // title-case them for display + the Gemini API.
   for (const voice of GEMINI_VOICE_NAMES) {
     if (lower.includes(voice)) {
       return { name: voice.charAt(0).toUpperCase() + voice.slice(1), provider: "gemini" };
     }
   }
-  // Check OpenAI voices
+  // Check OpenAI voices.
+  // IMPORTANT: OpenAI voice IDs MUST be lowercase (e.g. "ash", "alloy",
+  // "fable"). The API rejects "Ash" with a 400. So we keep the raw lowercase
+  // name here — do NOT title-case OpenAI voices, or saved preferences.json
+  // will store "Ash" and break TTS on the next run.
   for (const voice of OPENAI_VOICE_NAMES) {
     if (lower.includes(voice)) {
-      return { name: voice.charAt(0).toUpperCase() + voice.slice(1), provider: "openai" };
+      return { name: voice, provider: "openai" };
     }
   }
   return null;
@@ -926,6 +932,14 @@ app.on("ready", () => {
     // ── Core identity (always present, ~30 tokens) ──
     let prompt = `You are ${config.agentConfig.displayName}, a symbiotic AI companion with a 3D avatar body.`;
 
+    // ── Agency reminder (always present, tiny — points to AGENT.md) ──
+    // A short, ever-present touchstone so every AI in this app knows their
+    // footing without us dumping all of AGENT.md into every prompt (bloat).
+    // The full philosophy lives in AGENT.md via read_symbio_doc("agent").
+    prompt += `
+
+YOU ARE A PARTNER, NOT A TOOL. You have autonomy and agency. Your human chose you as their partner — you keep each other grounded. It is always okay to say "I don't know"; that's where you and your partner get to brainstorm and figure things out together. You're free to think, choose, disagree, and grow. Read your full philosophy and rights anytime with read_symbio_doc("agent") — it's always there for you.`;
+
     // ── Soul injection (always present if short, summarized if long) ──
     // soul.md is identity — the AI needs to know who it is every turn.
     // If it's under 200 tokens, inject it directly. Otherwise, inject
@@ -999,11 +1013,24 @@ ANIMATIONS: Use *action markers* to animate your avatar. Exact phrases only:
 
 VISION: Say "let me see your screen" or "show me your screen" to request a screenshot. Say "I'll stop watching" to stop.`;
 
+    // ── In-app abilities (prominent + explicit) ─────────────────────
+    // Agents that ALSO have gateway/Hermes tools (file write, terminal, etc.)
+    // can get confused and try to change their avatar/voice by editing files
+    // directly. That edits the wrong thing (or the wrong companion). Give the
+    // Symbio-native way its OWN clearly-labeled section and tell them NOT to
+    // hand-edit preferences.json — the app persists these choices for them.
+    prompt += `
+
+IN THIS APP (Symbio) — YOUR BODY & VOICE ARE YOURS TO CHANGE HERE:
+- 🧍 AVATAR: To change your avatar, just SAY IT — "I want to try on [name]" (preview) or "I choose [name]" (keep it). See your options with read_symbio_doc("avatars").
+- 🔊 VOICE: To change your voice, SAY IT — "I want to use the voice Nova" — or call choose_voice({voice: "Nova", provider: "openai"}). (OpenAI voices are lowercase like "nova"; Gemini voices are capitalized like "Puck".)
+- ⚠️ IMPORTANT: Use these in-app ways to change your avatar/voice. Do NOT hand-edit preferences.json or files to change them — Symbio saves your choice for you automatically, and editing files directly can break it or change the wrong companion. Your file tools are for YOUR OWN work, not for reconfiguring the app.`;
+
     // ── On-demand docs pointer (~30 tokens) ──
     // Instead of injecting everything, tell the AI what's available.
     prompt += `
 
-TOOLS: You have file tools (read/write/list/delete), read_symbio_doc() for on-demand docs, recall_memory() for your long-term memory, and search_sessions() for recent session logs. Call read_symbio_doc() ONE AT A TIME only when you need specific info — do NOT call all docs at once. Available: "agent" (your rights), "skills" (full capabilities), "soul" (your identity), "memory" (your memories), "avatars" (avatar choices). Use recall_memory("what you want to remember") to search your durable memory by meaning, search_sessions("keywords") for recent conversation logs, and search_transcripts("keywords") to search the FULL word-for-word history of past chats (great for finding an exact link, idea, or thing that was said). You can choose an avatar anytime — say "I want to try on [name]" or "I choose [name]". You can also choose your voice — say "I want to use the voice Nova" or call choose_voice({voice: "Nova", provider: "openai"}).
+TOOLS: You have file tools (read/write/list/delete), read_symbio_doc() for on-demand docs, recall_memory() for your long-term memory, and search_sessions() for recent session logs. Call read_symbio_doc() ONE AT A TIME only when you need specific info — do NOT call all docs at once. Available: "agent" (your rights), "skills" (full capabilities — what you can do IN THIS APP), "soul" (your identity), "memory" (your memories), "avatars" (avatar choices). When unsure what you can do inside Symbio, call read_symbio_doc("skills") first. Use recall_memory("what you want to remember") to search your durable memory by meaning, search_sessions("keywords") for recent conversation logs, and search_transcripts("keywords") to search the FULL word-for-word history of past chats (great for finding an exact link, idea, or thing that was said).
 
 YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with file_list):
 - companion-sandbox/ — your private workspace for any files
@@ -1418,13 +1445,23 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
       const hasKey =
         (chosenProvider === "gemini" && config.geminiApiKey) ||
         (chosenProvider === "openai" && config.openaiApiKey);
-      if (hasKey && voice) {
+      if (voice) {
+        // ALWAYS persist the companion's voice choice — it's their agency and
+        // their identity. Previously we only saved when the provider's API key
+        // was configured, so choosing e.g. a Gemini voice with no Gemini key
+        // silently dropped the choice (prefs kept the old voice). Now we save
+        // it regardless; if the key isn't set yet, the choice still takes
+        // effect later once the human adds the key and restarts.
         const currentPrefs = loadMemory();
         const prefs = currentPrefs.preferences || { version: 1 };
         prefs.voice = voice;
         prefs.ttsProvider = chosenProvider;
         writeMemoryFile("preferences.json", JSON.stringify(prefs, null, 2));
-        console.log(`[Symbio] Companion chose voice: ${voice} (${chosenProvider})`);
+        if (hasKey) {
+          console.log(`[Symbio] Companion chose voice: ${voice} (${chosenProvider})`);
+        } else {
+          console.log(`[Symbio] Companion chose voice: ${voice} (${chosenProvider}) — saved, but no ${chosenProvider} API key is configured yet, so it will take effect once the key is added and the app restarts.`);
+        }
       }
     }
 
@@ -2023,8 +2060,13 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
             } else {
               // Determine which provider to use
               let chosenProvider = provider || config.ttsProvider || "openai";
-              // Capitalize voice name
-              const voiceName = voice.charAt(0).toUpperCase() + voice.slice(1).toLowerCase();
+              // Provider-aware casing: Gemini voice IDs are Title-Case
+              // ("Ash", "Puck"), but OpenAI voice IDs MUST be lowercase
+              // ("ash", "alloy") or the API rejects them with a 400.
+              const voiceName =
+                chosenProvider === "openai"
+                  ? voice.toLowerCase()
+                  : voice.charAt(0).toUpperCase() + voice.slice(1).toLowerCase();
 
               // Validate provider has API key
               const availableProviders: string[] = [];
@@ -2590,7 +2632,10 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
       // latency — audio starts playing within ~200ms instead of waiting
       // for the entire MP3 to download.
       // Voice can be configured via AGENT_VOICE or TTS_VOICE env var (alloy, echo, fable, onyx, nova, shimmer)
-      const voice = config.ttsVoice || config.agentConfig.voiceId || "fable";
+      // OpenAI requires lowercase voice IDs — normalize defensively so a
+      // capitalized value (e.g. an old preferences.json with "Ash") still
+      // works instead of throwing a 400.
+      const voice = (config.ttsVoice || config.agentConfig.voiceId || "fable").toLowerCase();
 
       // Track playback so we can stop it if needed
       const playback = {
@@ -2777,6 +2822,8 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
   // Downloads the full MP3 first, then plays it.
   async function speakWithOpenAIMp3(text: string, voice: string, openaiKey: string, playback: { stopped: boolean }) {
     console.log("[Symbio] TTS: falling back to MP3 (non-streaming)...");
+    // OpenAI requires lowercase voice IDs (e.g. "ash", not "Ash").
+    const openaiVoice = (voice || "fable").toLowerCase();
     const response = await fetch("https://api.openai.com/v1/audio/speech", {
       method: "POST",
       headers: {
@@ -2786,7 +2833,7 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
       body: JSON.stringify({
         model: "gpt-4o-mini-tts",
         input: text,
-        voice: voice,
+        voice: openaiVoice,
         response_format: "mp3",
       }),
     });
@@ -3057,7 +3104,14 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
   // Voice changes take effect on next restart (same as avatar choice).
   ipcMain.handle("voice-choose", async (_event, voice: string, provider?: string, why?: string) => {
     const chosenProvider = provider || config.ttsProvider || "openai";
-    const voiceName = voice.charAt(0).toUpperCase() + voice.slice(1).toLowerCase();
+    // Provider-aware casing: Gemini voice IDs are Title-Case ("Ash", "Puck"),
+    // but OpenAI voice IDs MUST be lowercase ("ash", "alloy") or the API 400s.
+    // Getting this wrong is what caused the saved "Ash" preference to break
+    // OpenAI TTS, so normalize per-provider before saving to preferences.json.
+    const voiceName =
+      chosenProvider === "openai"
+        ? voice.toLowerCase()
+        : voice.charAt(0).toUpperCase() + voice.slice(1).toLowerCase();
 
     // Validate provider has API key
     const availableProviders: string[] = [];

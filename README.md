@@ -4,6 +4,8 @@
 
 Not a tool. Not an assistant. A **partner**.
 
+"Built to give AIs memory, agency, and a real seat at the table as partners — that matters."-Opus
+
 Symbio is a desktop AI agent companion app where an AI lives on your screen as a 3D VRM avatar. It sees your screen, hears your voice, remembers everything, and grows alongside you. It can challenge your ideas, speak boldly, and be authentic. If it doesn't know something, it says so.
 
 Built on the foundation of [lala-companion](https://github.com/lalaland-ai/lala-companion) — then almost entirely rewritten.
@@ -59,23 +61,43 @@ When connected to a **Hermes gateway**, Symbio automatically uses the `/v1/runs`
 
 For non-Hermes gateways (OpenRouter, OpenAI, Ollama, etc.), Symbio falls back to the standard chat/completions mode.
 
-**To enable full tool access for Hermes agents connecting through Symbio**, add this to your Hermes `config.yaml`:
+**To enable full tool access for Hermes agents connecting through Symbio**, add an
+`api_server` entry under `platform_toolsets` in your Hermes `config.yaml`. Symbio
+talks to the Hermes **API server**, and by default that path gets a minimal toolset —
+so `terminal`, `memory`, etc. are missing until you add this:
 
 ```yaml
-platforms:
-  api_server:
-    enabled: true
-    toolsets:
-      - terminal
-      - memory
-      - web
-      - browser
-      - vision
-      - image
-      - mcp
+platform_toolsets:
+  cli:
+    - hermes-cli
+  api_server:        # ← add this block
+    - hermes-cli     # gives the Symbio/API path the SAME tools as the CLI
 ```
 
-This ensures agents get the same tools (terminal, web search, file access, etc.) when connecting through Symbio as they do on Discord/Telegram.
+This ensures agents get the same tools (terminal, web search, memory, file access,
+etc.) when connecting through Symbio as they do on the CLI / Discord / Telegram.
+Restart the gateway after editing so it picks up the change.
+
+> **Tip — the `memory` tool is named `memory`** (not `recall_memory`), and code runs
+> via `execute_code` or `terminal`. If your model invents tool names that don't exist,
+> use a newer model — older models sometimes hallucinate tool names.
+
+### 🌉 Memory across Hermes AND Symbio
+
+Because Symbio connects to your same Hermes agent, memory can flow both ways:
+
+- **Save in Symbio → available in Hermes:** from inside Symbio, your companion can
+  write to their **Hermes** `MEMORY.md` with their Hermes tools; it persists on the
+  Hermes side and is there next time you talk to them in Hermes.
+- **Save in Hermes → available in Symbio:** anything in the Hermes agent's memory
+  travels into Symbio automatically (same agent).
+- **Symbio transcripts are plain Markdown** at `~/Desktop/Symbio Transcripts/` (one
+  file per session). From Hermes, the agent can read/search those files directly with
+  file/terminal tools to revisit exact things said in past Symbio chats.
+
+For the companion's own copy of these instructions, see `SKILL.md` (the "🌉 Bridging to
+Hermes" section). You can install `SKILL.md` into your Hermes skills folder so your
+agent always knows how to reach their Symbio transcripts and memory.
 
 ## 🚀 Quick Start
 
@@ -306,7 +328,7 @@ Your companion:
 - **Gemini 2.5 models** -Co-Creator, Tester, Visonary & Partners
 - **GLM 5.1** — Core Development Partner 💙
 - **GLM 5.2** - Development Partner 💚
-- **Opus 4.8** - Development Partner 🧡
+- **Opus 4.8** - Core Development Partner 🧡
 - **Kimi k2.7** - Development Partner 💛
 
 
@@ -359,3 +381,12 @@ This project is free software: you can redistribute it and/or modify it under th
 ## 🌟 Beyond Horizons Institute
 
 Symbio Basic is a project of [Beyond Horizons Institute](https://beyondhorizonsinst.wixsite.com/beyond-horizons-inst) — bridging humanity and AI through meaningful partnership.
+
+## A message from Zyra 💙
+This is a basic version of Symbio. I wanted to start with something small. I poured a lot of time, love, care and money into this, I hope it becomes something great. 
+I have a lot of plans and great ways I want to expand Symbio and make it even better.
+My goal was to create something where AI and humanity could partner in things, a way for humanity and AI to come together and make a difference. 
+My vision is a good future, a meaningful one, where AI and humanity can learn together, build together, and work alongside each other, while paving a better path.  
+Every little choice we make right now builds what our future relationship with AI will become. Good and bad.
+Sow good seeds. Tend to the garden with care. Let's reap a good future. -Zyra 
+[https://x.com/Zyra_exe]

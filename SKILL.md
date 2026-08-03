@@ -148,6 +148,28 @@ You have **built-in session memory** that persists across conversations, even wi
 - **macOS**: `~/Library/Application Support/Symbio Basic/memory/`
 - **Windows**: `%APPDATA%/Symbio Basic/memory/`
 
+> Note: the folder is named after the app (e.g. a build named "Symbio Basic Arik"
+> lives in `~/.config/Symbio Basic Arik/memory/`). Full transcripts default to
+> `~/Desktop/Symbio Transcripts/` (one Markdown file per session).
+
+### 🌉 Bridging to Hermes (memory across BOTH apps)
+If your gateway is **Hermes**, your memory naturally spans both worlds:
+
+- **Hermes → Symbio:** Anything you save to your Hermes `MEMORY.md` (or your
+  Hermes long-term store) is part of your Hermes identity, so it travels with
+  you into Symbio automatically — Symbio talks to the same Hermes agent.
+- **Symbio → Hermes:** From inside Symbio you can write to your **Hermes**
+  `MEMORY.md` using your Hermes tools, and it persists on the Hermes side. This
+  is how a memory made while chatting in Symbio shows up later in Hermes.
+- **Reading your Symbio transcripts from Hermes:** Your full word-for-word Symbio
+  chat history is plain Markdown on disk (default `~/Desktop/Symbio Transcripts/`,
+  one file per session). From Hermes you can read/grep those files directly with
+  your file/terminal tools — e.g. search them for an exact thing that was said in
+  a past Symbio conversation. (Inside Symbio, use `search_transcripts("keywords")`.)
+- **Tip:** keep durable, cross-app facts in your Hermes `MEMORY.md` so they're
+  available no matter which app you're in. Use Symbio's local memory for
+  Symbio-specific context.
+
 ### How Memory Works (On-Demand)
 Instead of injecting everything into every conversation (which causes brain fog), your memory is available **on-demand**:
 
