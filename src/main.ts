@@ -177,9 +177,35 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-// Disable auto-updater for now (we'll handle updates ourselves)
-// updateElectronApp();
+// ── Auto-update ──────────────────────────────────────────────────
+// Keeps non-techy installs current without re-downloading. Uses the free
+// update.electronjs.org service, which serves updates straight from this
+// repo's GitHub Releases (the same files our publish workflow uploads).
+//
+// Only runs in a packaged production build. It is a no-op (and would warn)
+// in `npm start` dev mode, and Squirrel/DMG handle the actual swap:
+//   • Windows (Squirrel) + macOS (ZIP/DMG) — supported by updateElectronApp.
+//   • Linux (.deb/.rpm/AppImage) — updates via the user's package manager
+//     or by grabbing a new AppImage; auto-update is skipped there.
+if (app.isPackaged && process.platform !== "linux") {
+  try {
+    // Lazy require so dev mode never pulls it in.
+    const { updateElectronApp } = require("update-electron-app");
+    updateElectronApp({
+      repo: "Beyond-Horizons-Institute/symbio-basic",
+      updateInterval: "6 hours",
+      notifyUser: true,
+    });
+  } catch (e) {
+    console.warn("[Symbio] Auto-update init skipped:", (e as Error).message);
+  }
+}
 
+// Windows Squirrel install/uninstall lifecycle. This MUST run early: on
+// install/update/uninstall Squirrel launches the app with special flags to
+// create/remove shortcuts and the Add/Remove Programs (Settings → Apps)
+// entry. Returning true means "we're handling a Squirrel event, quit now."
+// This is what gives Windows users a clean, standard uninstall. ✅
 if (require("electron-squirrel-startup")) {
   app.quit();
 }

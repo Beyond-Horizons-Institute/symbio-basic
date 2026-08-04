@@ -11,6 +11,7 @@
     "publish": "electron-forge publish",
     "lint": "eslint .",
     "format": "prettier --write .",
+    "icons": "node scripts/gen-icons.mjs",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "postinstall": "electron-rebuild -f -w better-sqlite3 || echo 'native rebuild skipped'"
   },
@@ -37,6 +38,7 @@
   "devDependencies": {
     "@electron-forge/cli": "^7.11.1",
     "@electron-forge/maker-deb": "^7.11.1",
+    "@electron-forge/maker-dmg": "^7.11.2",
     "@electron-forge/maker-rpm": "^7.11.1",
     "@electron-forge/maker-squirrel": "^7.11.1",
     "@electron-forge/maker-zip": "^7.11.1",
@@ -45,6 +47,7 @@
     "@electron-forge/plugin-webpack": "^7.11.1",
     "@electron-forge/publisher-github": "^7.11.1",
     "@electron/fuses": "^1.8.0",
+    "@reforged/maker-appimage": "^5.2.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/hark": "^1.2.5",
     "@types/pg": "^8.20.0",
@@ -60,6 +63,7 @@
     "eslint": "^10.0.3",
     "fork-ts-checker-webpack-plugin": "^9.1.0",
     "node-loader": "^2.1.0",
+    "png2icons": "^2.0.1",
     "prettier": "^3.5.3",
     "style-loader": "^4.0.0",
     "ts-loader": "^9.5.4",

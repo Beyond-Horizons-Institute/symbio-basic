@@ -1,21 +1,46 @@
+name: Publish
+
 on:
   push:
     branches:
       - main
   workflow_dispatch:
+
+# Allow the automatic GITHUB_TOKEN to create releases and upload assets.
+permissions:
+  contents: write
+
 jobs:
   publish:
     strategy:
+      # Don't cancel the other OS builds if one fails — we still want
+      # whatever installers succeeded, and clearer per-OS error messages.
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # v5 actions run on Node.js 24 natively (no deprecation warning).
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
+
+      # Linux system deps for building .deb / .rpm distributables.
+      - name: Install Linux packaging tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm fakeroot dpkg
+
       - run: npm ci
-      - run: npm run publish
+
+      - name: Publish
+        run: npm run publish
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          # The automatic per-run token already has contents:write via the
+          # permissions block above — no personal PAT needed. If you prefer a
+          # PAT (e.g. to publish to a different repo), set repo secret GH_TOKEN
+          # and it will be used instead.
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}

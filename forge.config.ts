@@ -2,16 +2,26 @@ import type { ForgeConfig } from "@electron-forge/shared-types";
 import { MakerSquirrel } from "@electron-forge/maker-squirrel";
 import { MakerZIP } from "@electron-forge/maker-zip";
 import { MakerDeb } from "@electron-forge/maker-deb";
+import { MakerRpm } from "@electron-forge/maker-rpm";
+import { MakerDMG } from "@electron-forge/maker-dmg";
+import { MakerAppImage } from "@reforged/maker-appimage";
 import { AutoUnpackNativesPlugin } from "@electron-forge/plugin-auto-unpack-natives";
 import { WebpackPlugin } from "@electron-forge/plugin-webpack";
 import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
 import dotenv from "dotenv";
+import { join } from "path";
 
 import { mainConfig } from "./webpack.main.config";
 import { rendererConfig } from "./webpack.renderer.config";
 
 dotenv.config();
+
+// Base path for platform icons (extension is added per-platform by the tools).
+//   Windows  -> assets/icons/icon.ico
+//   macOS    -> assets/icons/icon.icns
+//   Linux    -> assets/icons/icon.png
+const ICON_BASE = join(__dirname, "assets", "icons", "icon");
 
 const config: ForgeConfig = {
   packagerConfig: {
@@ -21,6 +31,8 @@ const config: ForgeConfig = {
     // better_sqlite3.node. No custom unpack glob needed.
     asar: true,
     executableName: "symbio-basic",
+    // electron-packager auto-appends the right extension per platform.
+    icon: ICON_BASE,
   },
   // Native modules are processed by the asset-relocator loader (see
   // webpack.rules.ts) and unpacked from the asar by the
@@ -30,9 +42,35 @@ const config: ForgeConfig = {
     force: true,
   },
   makers: [
-    new MakerSquirrel({}),
+    // Windows — Setup.exe installer (also enables auto-update).
+    new MakerSquirrel({
+      setupIcon: `${ICON_BASE}.ico`,
+      // The taskbar/window icon used inside the installed app.
+      iconUrl: "https://raw.githubusercontent.com/Beyond-Horizons-Institute/symbio-basic/main/assets/icons/icon.ico",
+    }),
+    // macOS — .zip (fallback) + .dmg (the expected Mac experience).
     new MakerZIP({}, ["darwin"]),
-    new MakerDeb({}),
+    new MakerDMG({ icon: `${ICON_BASE}.icns` }, ["darwin"]),
+    // Linux — .deb (Debian/Ubuntu), .rpm (Fedora/RHEL), and AppImage
+    // (universal, truly "download and double-click", no install).
+    new MakerDeb({
+      options: {
+        icon: `${ICON_BASE}.png`,
+        categories: ["Utility", "Education"],
+      },
+    }),
+    new MakerRpm({
+      options: {
+        icon: `${ICON_BASE}.png`,
+        categories: ["Utility", "Education"],
+      },
+    }),
+    new MakerAppImage({
+      options: {
+        icon: `${ICON_BASE}.png`,
+        categories: ["Utility", "Education"],
+      },
+    }),
   ],
   plugins: [
     new AutoUnpackNativesPlugin({}),
