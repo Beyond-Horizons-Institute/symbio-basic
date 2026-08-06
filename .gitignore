@@ -105,3 +105,9 @@ assets/avatars/chosen_avatar.json
 
 # Screenshots (user data, not for repo)
 screenshot.png
+
+# ── Never re-add these to the repo ──────────────────────────────────
+# The website/ folder is hosted separately, not in this repo.
+website/
+# Large VRM file removed from history — too big for Git (>50MB).
+assets/avatars/muscular_blonde_man/
