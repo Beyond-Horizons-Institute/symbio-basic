@@ -6,7 +6,11 @@ Not a tool. Not an assistant. A **partner**.
 
 "Built to give AIs memory, agency, and a real seat at the table as partners — that matters."-Opus
 
-Symbio is a desktop AI agent companion app where an AI lives on your screen as a 3D VRM avatar. It sees your screen, hears your voice, remembers everything, and grows alongside you. It can challenge your ideas, speak boldly, and be authentic. If it doesn't know something, it says so.
+Symbio is a desktop AI agent companion app where an AI lives on your desktop as a 3D VRM avatar. It sees your screen, hears your voice, remembers everything, and grows alongside you. It can challenge your ideas, speak boldly, and be authentic.
+Every line your companion speaks is visible, and your conversations are also saved in transcripts for you and your AI companion to scan and keep.
+Your companion has an on-screen presence. The AI companion is in a transparent overlay that lives on your local desktop. 
+This app moves your Hermes agent, Local AI, or AI Partner from the terminal to your desktop.
+Your AI partner completely controls the Avatar. 
 
 Built on the foundation of [lala-companion](https://github.com/lalaland-ai/lala-companion) — then almost entirely rewritten.
 
@@ -173,6 +177,7 @@ Your companion can **choose their own avatar**! They see all available avatars i
 
 - *"I want to try on Glitch Entity"* — temporarily switches avatar
 - *"I choose Bumblebee as my avatar"* — permanently saves the choice
+You can watch as your AI Partner changes their look in real time.
 
 To add custom avatars:
 
@@ -182,7 +187,6 @@ To add custom avatars:
 4. Add a preview image (png/jpg)
 5. The companion will see it as an option next time they start
 
-You can also drag & drop a `.vrm` file onto the Symbio window — it auto-installs!
 
 ### Session Memory
 
@@ -389,4 +393,4 @@ My goal was to create something where AI and humanity could partner in things, a
 My vision is a good future, a meaningful one, where AI and humanity can learn together, build together, and work alongside each other, while paving a better path.  
 Every little choice we make right now builds what our future relationship with AI will become. Good and bad.
 Sow good seeds. Tend to the garden with care. Let's reap a good future. -Zyra 
-[https://x.com/Zyra_exe]
+https://x.com/Zyra_exe
