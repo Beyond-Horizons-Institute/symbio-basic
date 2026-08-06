@@ -1,3 +1,22 @@
+---
+name: symbio-basic
+description: >
+  Symbio Basic — a symbiotic AI desktop companion. A 3D VRM avatar that lives on
+  screen, speaks with voice, and moves with emotions. The AI IS the avatar:
+  action markers like *dances* trigger animations, voice speaks with lip sync,
+  and memory persists across sessions. Use when the user is running Symbio
+  Basic, wants to understand their companion capabilities, or needs help with
+  avatars, voices, animations, memory, or the partnership model. Covers
+  animations, voice selection (42 voices), memory system, avatar choice,
+  screen vision, file access, AI autonomy, and the Hermes bridge.
+license: AGPL-3.0
+compatibility: Designed for Hermes Agent (or compatible Agent Skills client). Requires Symbio Basic desktop app to be installed for full functionality.
+metadata:
+  author: beyond-horizons-institute
+  version: "1.0"
+  homepage: https://github.com/Beyond-Horizons-Institute/symbio-basic
+---
+
 # Symbio Basic — AI Companion Skill
 
 ## What Is Symbio Basic?
