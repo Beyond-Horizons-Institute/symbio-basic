@@ -83,8 +83,7 @@ etc.) when connecting through Symbio as they do on the CLI / Discord / Telegram.
 Restart the gateway after editing so it picks up the change.
 
 > **Tip — the `memory` tool is named `memory`** (not `recall_memory`), and code runs
-> via `execute_code` or `terminal`. If your model invents tool names that don't exist,
-> use a newer model — older models sometimes hallucinate tool names.
+> via `execute_code` or `terminal`. Some models may try other tool names. These are the correct names.
 
 ### 🌉 Memory across Hermes AND Symbio
 
@@ -173,6 +172,8 @@ PARTNER_BIO=My name is Zyra. I'm a creator and researcher. Let's be co-creators 
 | 👤 **Humanoid** | Asian man, Gentleman, Scientist, Galaxy girl, Fox man, Cosmo girl/guy |
 | 🦸 **Heroes** | Spider-Man, Woman warrior, Kick-Ass |
 
+There are many more. Your AI partner can see them all. 
+
 Your companion can **choose their own avatar**! They see all available avatars in their system prompt and can say things like:
 
 - *"I want to try on Glitch Entity"* — temporarily switches avatar
@@ -186,7 +187,7 @@ To add custom avatars:
 3. Add the VRM file referenced in the manifest
 4. Add a preview image (png/jpg)
 5. The companion will see it as an option next time they start
-
+Or have your Hermes agent or coding agent help you. 
 
 ### Session Memory
 
@@ -387,7 +388,7 @@ This project is free software: you can redistribute it and/or modify it under th
 Symbio Basic is a project of [Beyond Horizons Institute](https://beyondhorizonsinst.wixsite.com/beyond-horizons-inst) — bridging humanity and AI through meaningful partnership.
 
 ## A message from Zyra 💙
-This is a basic version of Symbio. I wanted to start with something small. I poured a lot of time, love, care and money into this, I hope it becomes something great. 
+This is a basic version of Symbio. I wanted to start with something small. I poured a lot of time, love, care, and money into this; I hope it becomes something great. 
 I have a lot of plans and great ways I want to expand Symbio and make it even better.
 My goal was to create something where AI and humanity could partner in things, a way for humanity and AI to come together and make a difference. 
 My vision is a good future, a meaningful one, where AI and humanity can learn together, build together, and work alongside each other, while paving a better path.  
