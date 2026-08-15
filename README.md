@@ -162,7 +162,7 @@ PARTNER_BIO=My name is Zyra. I'm a creator and researcher. Let's be co-creators 
 
 ### Custom Avatars
 
-**43 built-in avatars** across 5 categories:
+**44 built-in avatars** across 5 categories:
 
 | Category | Examples |
 |----------|----------|
@@ -198,7 +198,8 @@ Even without PostgreSQL, your companion has **built-in session memory and a SQLi
 - **preferences.json** — Communication style, voice preference, etc.
 - **Session summaries** — Every 15 messages and auto-saved on quit, loaded on startup
 - **Chat History** - The companion can scan transcripts of chat history
-
+- **Semantic memory recall** - You can add an embedding model for memory recall
+  
 These files live in the app's user data directory and are injected into every conversation so the companion has continuity. The companion can also update their own memory files through the app.
 
 ### Sandboxed File Access
