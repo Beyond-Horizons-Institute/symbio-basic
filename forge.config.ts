@@ -122,6 +122,11 @@ const config: ForgeConfig = {
         // "Publish" on GitHub, it becomes the clean "Latest release".
         draft: true,
         prerelease: false,
+        // Always overwrite an existing asset of the same name. Without this,
+        // re-running a build for a tag that already has assets would SKIP the
+        // upload and leave STALE binaries attached. force:true guarantees the
+        // release always holds the freshest build.
+        force: true,
       },
     },
   ],
