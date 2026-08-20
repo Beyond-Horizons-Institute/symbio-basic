@@ -1,17 +1,68 @@
 name: Publish
 
+# Release flow (Option A — tag-triggered):
+#   1. Bump the version in package.json (e.g. 1.0.0 -> 1.0.1).
+#   2. Commit, then create + push a matching tag:  git tag v1.0.1 && git push --tags
+#   3. This workflow runs: it creates a DRAFT release named after the tag,
+#      builds installers on Windows/macOS/Linux, and attaches them to that draft.
+#   4. Review the draft on GitHub, then click "Publish release" (or set
+#      AUTO_PUBLISH below to un-draft automatically).
+#
+# You can also run it manually from the Actions tab (workflow_dispatch) and
+# type a tag name like v1.0.0.
+
 on:
   push:
-    branches:
-      - main
+    tags:
+      - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build (e.g. v1.0.0). Must match package.json version."
+        required: true
+        default: "v1.0.0"
 
 # Allow the automatic GITHUB_TOKEN to create releases and upload assets.
 permissions:
   contents: write
 
+# The version tag drives everything. For a tag push it's the tag ref; for a
+# manual run it's the tag you typed in.
+env:
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
 jobs:
+  # ── Step 1: make sure a DRAFT release exists for this tag ──────────────────
+  # electron-forge's GitHub publisher only ATTACHES installers to an existing
+  # release. We create it once here (idempotent) so the three OS build jobs
+  # below have something to upload to.
+  prepare-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Create draft release if missing
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$RELEASE_TAG" \
+               --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists — reusing it."
+          else
+            echo "Creating draft release $RELEASE_TAG ..."
+            # --draft: stays hidden until YOU review + click Publish.
+            # We do NOT pass --prerelease so that, once published, it becomes
+            # the clean "Latest release" (friendlier for non-technical users,
+            # and it shows up under /releases/latest).
+            gh release create "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Symbio Basic $RELEASE_TAG" \
+              --draft \
+              --generate-notes
+          fi
+
+  # ── Step 2: build installers on each OS and attach them to the draft ───────
   publish:
+    needs: prepare-release
     strategy:
       # Don't cancel the other OS builds if one fails — we still want
       # whatever installers succeeded, and clearer per-OS error messages.
@@ -37,6 +88,10 @@ jobs:
       - run: npm ci
 
       - name: Publish
+        # Builds all installers for this OS and attaches them to the draft
+        # release created by the prepare-release job. electron-forge's
+        # publisher-github looks for a release matching the package.json
+        # version (e.g. v1.0.0), which is the same tag we created above.
         run: npm run publish
         env:
           # The automatic per-run token already has contents:write via the
@@ -44,3 +99,22 @@ jobs:
           # PAT (e.g. to publish to a different repo), set repo secret GH_TOKEN
           # and it will be used instead.
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+
+  # ── Step 3 (optional): auto-publish the draft once all installers uploaded ─
+  # By default the release stays a DRAFT so you can review it and write nice
+  # notes before it goes live. To make releases go live automatically, change
+  # the `if:` below to `if: true` (or delete the condition).
+  finalize-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    # Set to `true` to auto-publish. Left as `false` so YOU click "Publish"
+    # after reviewing the draft — safest for a first real release.
+    if: false
+    steps:
+      - name: Un-draft the release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft=false

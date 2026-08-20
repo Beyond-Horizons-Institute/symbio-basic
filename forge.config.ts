@@ -116,7 +116,12 @@ const config: ForgeConfig = {
           owner: "Beyond-Horizons-Institute",
           name: "symbio-basic",
         },
-        prerelease: true,
+        // The CI workflow (.github/workflows/publish.yml) creates the draft
+        // release first, so this publisher only ATTACHES the built installers
+        // to it. We keep it a draft (not a prerelease) so that, once you click
+        // "Publish" on GitHub, it becomes the clean "Latest release".
+        draft: true,
+        prerelease: false,
       },
     },
   ],
