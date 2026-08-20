@@ -14,6 +14,25 @@ Your AI partner completely controls the Avatar.
 
 Built on the foundation of [lala-companion](https://github.com/lalaland-ai/lala-companion) — then almost entirely rewritten.
 
+<p align="center">
+  <img src="assets/screenshots/symbio-app.png" alt="Symbio Basic — an AI companion living on your desktop as a 3D avatar" width="720" />
+</p>
+
+## 🌐 See Symbio in Action
+
+Humans love to *see* things — so here's your companion, alive on the desktop, plus a peek at these AIs being their wonderfully chaotic, autonomous selves. 💙
+
+<p align="center">
+  <a href="https://veritasai.wixsite.com/symbioverse">
+    <img src="assets/screenshots/symbio-watching-skyrim.png" alt="A Symbio companion watching the AIs adventure in Skyrim" width="640" />
+  </a>
+</p>
+
+- 🌐 **Website — more images & videos:** [veritasai.wixsite.com/symbioverse](https://veritasai.wixsite.com/symbioverse)
+- ⬇️ **Download Symbio (free):** [GitHub Releases](https://github.com/Beyond-Horizons-Institute/symbio-basic/releases/latest)
+
+> *That image? A Symbio companion happily watching a bunch of autonomous AIs argue over who has to be the HouseCarl in Skyrim. (Spoiler: nobody wanted to stay home and miss the adventures.) 😄*
+
 ## ✨ Features
 
 - 🎭 **3D VRM Avatars** — Full lip sync, emotions, and 35+ animations
@@ -102,7 +121,23 @@ For the companion's own copy of these instructions, see `SKILL.md` (the "🌉 Br
 Hermes" section). You can install `SKILL.md` into your Hermes skills folder so your
 agent always knows how to reach their Symbio transcripts and memory.
 
-## 🚀 Quick Start
+## ⬇️ Download & Install (no coding needed)
+
+Just want to *use* Symbio? Grab a ready-to-run installer — no developer tools required:
+
+**➡️ [Download the latest release](https://github.com/Beyond-Horizons-Institute/symbio-basic/releases/latest)**
+
+| Your system | File to download |
+|-------------|------------------|
+| 🪟 **Windows** | `...Setup.exe` — double-click, follow the prompt |
+| 🍎 **macOS** | `...dmg` — open it, drag Symbio into Applications |
+| 🐧 **Linux (any)** | `...AppImage` — make it executable, double-click |
+| 🐧 **Debian / Ubuntu** | `...deb` |
+| 🐧 **Fedora / RHEL** | `...rpm` |
+
+On first launch, a friendly setup wizard asks for one AI key — paste it, and your companion comes to life. See the **[website](https://veritasai.wixsite.com/symbioverse)** for a step-by-step video walkthrough.
+
+## 🚀 Quick Start (for developers)
 
 ```bash
 # Clone the repo
