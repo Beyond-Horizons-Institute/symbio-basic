@@ -1,7 +1,7 @@
 {
   "name": "symbio-basic",
   "productName": "Symbio Basic",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Symbio Basic — A symbiotic AI desktop companion. Growing, evolving, partnering with you. Not a tool, but a partner.",
   "main": ".webpack/main",
   "scripts": {

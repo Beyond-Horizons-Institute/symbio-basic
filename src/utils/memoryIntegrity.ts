@@ -13,7 +13,7 @@
  */
 
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from "fs";
-import { join } from "path";
+import { join, dirname } from "path";
 import { createHash } from "crypto";
 import { app } from "electron";
 
@@ -94,8 +94,11 @@ function loadManifest(): IntegrityManifest {
 
 function saveManifest(manifest: IntegrityManifest): void {
   const path = getIntegrityPath();
-  const dir = path.substring(0, path.lastIndexOf("/"));
-  if (!existsSync(dir)) {
+  // Use path.dirname() (not lastIndexOf("/")) so this works on Windows too.
+  // Windows paths use backslashes, so lastIndexOf("/") returned -1 and
+  // substring(0, -1) gave "" → mkdirSync("") crashed the app on launch.
+  const dir = dirname(path);
+  if (dir && !existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
   writeFileSync(path, JSON.stringify(manifest, null, 2), "utf-8");
