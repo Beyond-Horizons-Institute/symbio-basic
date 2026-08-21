@@ -21,9 +21,52 @@ process.stdout.on?.("error", (err: NodeJS.ErrnoException) => {
 process.stderr.on?.("error", (err: NodeJS.ErrnoException) => {
   if (err.code === "EPIPE") process.exit(0);
 });
+
+// ── Symbio: Crash visibility (don't die silently) ──────────────────
+// Previously an uncaught startup error re-threw and killed the process
+// with NO message — the window would flash then vanish, giving users
+// nothing to debug. Now we write a crash log to disk AND show a dialog
+// so the actual error is visible. This is the difference between a
+// "mysterious vanish" and a one-line fix.
+function logFatal(kind: string, err: unknown) {
+  const msg =
+    err instanceof Error ? `${err.name}: ${err.message}\n${err.stack || ""}` : String(err);
+  const line = `[${new Date().toISOString()}] ${kind}\n${msg}\n\n`;
+  try {
+    // Lazy requires so this handler works even if imports below failed.
+    const os = require("os");
+    const path = require("path");
+    const fs = require("fs");
+    // Write next to where the user can easily find it.
+    const logPath = path.join(os.homedir(), "symbio-crash.log");
+    fs.appendFileSync(logPath, line);
+    // eslint-disable-next-line no-console
+    console.error(line);
+    try {
+      const { app, dialog } = require("electron");
+      const show = () =>
+        dialog.showErrorBox(
+          "Symbio hit a startup error",
+          `${msg}\n\nA copy was saved to:\n${logPath}`,
+        );
+      if (app?.isReady?.()) show();
+      else app?.whenReady?.().then(show).catch(() => {});
+    } catch {
+      /* electron dialog unavailable — the file log still captured it */
+    }
+  } catch {
+    /* last-resort: nothing else we can safely do */
+  }
+}
+
 process.on("uncaughtException", (err: NodeJS.ErrnoException) => {
-  if (err.code === "EPIPE") return; // Silently ignore EPIPE
-  throw err; // Re-throw everything else
+  if (err.code === "EPIPE") return; // Silently ignore EPIPE (Linux pipe close)
+  logFatal("uncaughtException", err);
+  // Give the dialog a moment to show, then exit cleanly.
+  setTimeout(() => process.exit(1), 3000);
+});
+process.on("unhandledRejection", (reason: unknown) => {
+  logFatal("unhandledRejection", reason);
 });
 
 // Load .env FIRST — before any other imports that might read process.env
