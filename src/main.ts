@@ -645,6 +645,27 @@ const createOverlayWindow = (
   width: number,
   height: number,
 ) => {
+  const OVERLAY_W = 500;
+  const OVERLAY_H = 800;
+
+  // ── Symbio: Position the overlay ON-SCREEN ─────────────────────────
+  // BUG (fixed): previously x=width, y=height where width/height were the
+  // FULL primary-display size — so the window's top-left corner landed at
+  // the very bottom-right pixel of the screen, i.e. entirely OFF-SCREEN.
+  // Some Linux WMs clamp off-screen windows back into view (so it "worked"
+  // in dev on Linux), but Windows does NOT — the overlay was created but
+  // invisible, so "Open Avatar" appeared to do nothing.
+  //
+  // Use the display's WORK AREA (excludes the taskbar) and dock the overlay
+  // to the right edge, near the top, then clamp so it's always fully visible.
+  const workArea = screen.getPrimaryDisplay().workArea; // {x,y,width,height}
+  const margin = 24;
+  let overlayX = workArea.x + workArea.width - OVERLAY_W - margin;
+  let overlayY = workArea.y + margin;
+  // Clamp defensively so it can never be placed off-screen again.
+  overlayX = Math.max(workArea.x, Math.min(overlayX, workArea.x + workArea.width - OVERLAY_W));
+  overlayY = Math.max(workArea.y, Math.min(overlayY, workArea.y + workArea.height - OVERLAY_H));
+
   overlayWindow = new BrowserWindow({
     title: `Symbio Basic — ${config.agentConfig.displayName}`,
     webPreferences: {
@@ -654,19 +675,21 @@ const createOverlayWindow = (
       nodeIntegration: false,
       contextIsolation: true,
     },
-    height: 800,
-    width: 500,
+    height: OVERLAY_H,
+    width: OVERLAY_W,
     minWidth: 300,
     minHeight: 400,
     alwaysOnTop: true,
     transparent: true,
     frame: true,
     resizable: true,
-    x: width,
-    y: height,
+    x: overlayX,
+    y: overlayY,
   });
 
   overlayWindow.setFocusable(false);
+  // Belt-and-suspenders: ensure the window really is at a visible spot.
+  overlayWindow.setPosition(overlayX, overlayY);
   overlayWindow.loadURL(OVERLAY_WINDOW_WEBPACK_ENTRY);
 
   // ── Symbio: Debug DevTools for overlay ──────────────────────────
