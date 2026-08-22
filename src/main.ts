@@ -3481,6 +3481,48 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
     };
   });
 
+  // ── Symbio: Full config for the Settings panel (merge-safe editing) ──
+  // Returns the COMPLETE current configuration in the same shape the setup
+  // wizard/save handler use. The Settings panel pre-fills from this, the user
+  // edits a field or two, then sends the WHOLE object back to save-setup-config
+  // — so nothing else in .env gets wiped. (save-setup-config rewrites the
+  // entire .env, so a partial save would drop everything not included.)
+  // Note: this NEVER touches the AI's memory/soul/preferences files — those
+  // live separately and are only created once, on first launch.
+  ipcMain.handle("get-full-setup-config", async () => {
+    return {
+      hermesApiUrl: config.hermesApiUrl || "",
+      hermesApiKey: config.hermesApiKey || "",
+      llmModel: config.llmModel || "",
+      // Identity is the AI's own — the human doesn't edit it in Settings, but
+      // we still round-trip the current values so a save never blanks them.
+      agentName: config.agentName || "companion",
+      agentDisplayName: config.agentConfig.displayName || "Companion",
+      partnerBio: config.partnerBio || "",
+      agentColor: config.agentConfig.color || "#00bcd4",
+      openaiApiKey: config.openaiApiKey || "",
+      ttsProvider: config.ttsProvider || "openai",
+      ttsModel: config.ttsModel || "gpt-4o-mini-tts",
+      ttsVoice: config.ttsVoice || "fable",
+      ttsInstructions: config.ttsInstructions || "",
+      geminiApiKey: config.geminiApiKey || "",
+      visionApiKey: config.visionApiKey || "",
+      visionModel: config.visionModel || "",
+      sttModel: config.sttModel || "whisper-1",
+      enableMemory: true,
+      embeddingApiUrl: config.embeddingApiUrl || "",
+      embeddingModel: config.embeddingModel || "",
+      embeddingApiKey: config.embeddingApiKey || "",
+      embeddingDimensions: String(config.embeddingDimensions || 768),
+      memoryPgUrl: config.memoryPgUrl || "",
+      summaryModel: config.summaryModel || "",
+      summaryApiUrl: config.summaryApiUrl || "",
+      summaryApiKey: config.summaryApiKey || "",
+      summaryEveryMessages: String(config.summaryEveryMessages || 15),
+      screenshotInterval: String(config.screenshotInterval || 30),
+    };
+  });
+
   // Save configuration from the setup wizard
   ipcMain.handle("save-setup-config", async (_event, setupConfig: Record<string, unknown>) => {
     try {

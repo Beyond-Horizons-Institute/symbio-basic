@@ -25,6 +25,7 @@ import {
   Collapse,
   Snackbar,
   Alert,
+  IconButton,
 } from "@mui/material";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { type ChangeEvent, type FormEvent, useCallback, useState, useEffect, useRef } from "react";
@@ -39,6 +40,7 @@ import SendIcon from "@mui/icons-material/Send";
 import SmartToyIcon from "@mui/icons-material/SmartToy";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import MemoryIcon from "@mui/icons-material/Psychology";
+import SettingsIcon from "@mui/icons-material/Settings";
 import { config, COMPANIONS } from "./config";
 import { symbioColors } from "./theme";
 import type { MCPToolCategory } from "./transport/MCPToolsClient";
@@ -70,6 +72,9 @@ const App = () => {
   // Check if the app needs setup (no API key configured).
   // If so, show the setup wizard instead of the main UI.
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null); // null = checking
+  // Settings panel: re-opens the wizard in merge-safe "settings" mode so the
+  // pair can update API keys / voice later without losing anything.
+  const [showSettings, setShowSettings] = useState(false);
 
   useEffect(() => {
     // Check if setup is needed AND fetch runtime config from main process.
@@ -519,6 +524,26 @@ const App = () => {
     );
   }
 
+  // Settings panel — the wizard re-opened in merge-safe "settings" mode.
+  // Pre-fills the current config and only overwrites what the user changes;
+  // the AI's memory/soul/preferences files are never touched.
+  if (showSettings) {
+    return (
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <SetupWizard
+          mode="settings"
+          onComplete={() => {
+            // Pull the freshly-saved config into the running app, then close.
+            window.symbioAPI?.getConfig?.();
+            setShowSettings(false);
+          }}
+          onCancel={() => setShowSettings(false)}
+        />
+      </ThemeProvider>
+    );
+  }
+
   return (
     <Container maxWidth="md" sx={{ p: 1 }}>
       <Stack alignItems="center" my={2}>
@@ -552,6 +577,19 @@ const App = () => {
           size="small"
           sx={{ backgroundColor: "rgba(0, 188, 212, 0.15)", color: symbioColors.teal.light, border: `1px solid ${symbioColors.teal.dark}` }}
         />
+        {/* Push the Settings gear to the right edge */}
+        <Box sx={{ flexGrow: 1 }} />
+        <IconButton
+          onClick={() => setShowSettings(true)}
+          title="Settings — update API keys & voice (your companion's memories stay safe)"
+          sx={{
+            color: symbioColors.silver.main,
+            border: `1px solid ${symbioColors.dark.border}`,
+            "&:hover": { color: symbioColors.teal.glow, bgcolor: symbioColors.dark.card },
+          }}
+        >
+          <SettingsIcon />
+        </IconButton>
       </Stack>
 
       <Stack spacing={2} sx={{ mt: 2 }}>

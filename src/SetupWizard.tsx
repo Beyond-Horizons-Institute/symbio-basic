@@ -31,7 +31,7 @@ import {
   IconButton,
   Chip,
 } from "@mui/material";
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
@@ -120,7 +120,19 @@ const COMPANION_COLORS = [
   { label: "Gold", value: "#ffc107" },
 ];
 
-export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
+export const SetupWizard = ({
+  onComplete,
+  mode = "setup",
+  onCancel,
+}: {
+  onComplete: () => void;
+  // "setup" = first-run wizard (default). "settings" = re-opened later to
+  // tweak API keys/voice; pre-fills current values and MERGE-saves so nothing
+  // else in the config is lost. The AI's memory/soul files are never touched.
+  mode?: "setup" | "settings";
+  onCancel?: () => void;
+}) => {
+  const isSettings = mode === "settings";
   const [activeStep, setActiveStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -161,6 +173,31 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
     setConfig((prev) => ({ ...prev, [field]: value }));
     setError(null);
   };
+
+  // ── Settings mode: pre-fill with the CURRENT config ─────────────────
+  // In settings mode we load the full existing config so the user edits real
+  // values (not blank defaults). Because save-setup-config rewrites the whole
+  // .env, pre-filling everything is what makes the save a safe MERGE — every
+  // field the user doesn't touch is written back exactly as it was.
+  useEffect(() => {
+    if (!isSettings) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const current = await window.symbioAPI?.getFullSetupConfig?.();
+        if (current && !cancelled) {
+          setConfig((prev) => ({ ...prev, ...(current as Partial<SetupConfig>) }));
+          // Reflect the loaded gateway in the preset selector.
+          const url = String((current as Record<string, unknown>).hermesApiUrl || "");
+          const known = GATEWAY_OPTIONS.find((g) => g.value === url);
+          setGatewayPreset(known ? url : "custom");
+        }
+      } catch (err) {
+        console.error("[Symbio] Failed to load current config for settings:", err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isSettings]);
 
   const handleGatewayPreset = (value: string) => {
     setGatewayPreset(value);
@@ -1068,45 +1105,104 @@ export const SetupWizard = ({ onComplete }: { onComplete: () => void }) => {
 
           {/* Navigation */}
           <Stack direction="row" spacing={2} sx={{ mt: 4 }} justifyContent="space-between">
-            <Button
-              onClick={handleBack}
-              disabled={activeStep === 0}
-              sx={{
-                color: symbioColors.silver.dark,
-                "&:hover": { bgcolor: symbioColors.dark.card },
-              }}
-            >
-              Back
-            </Button>
-
-            {activeStep === STEPS.length - 1 ? (
+            {/* In settings mode, the left button CLOSES without saving; in
+                setup mode it's the wizard Back button. */}
+            {isSettings ? (
               <Button
-                onClick={handleSave}
+                onClick={() => onCancel?.()}
                 disabled={saving}
-                variant="contained"
-                startIcon={<CheckCircleIcon />}
                 sx={{
-                  bgcolor: symbioColors.teal.main,
-                  "&:hover": { bgcolor: symbioColors.teal.dark },
-                  px: 4,
+                  color: symbioColors.silver.dark,
+                  "&:hover": { bgcolor: symbioColors.dark.card },
                 }}
               >
-                {saving ? "Saving..." : "Launch Symbio!"}
+                Close
               </Button>
             ) : (
               <Button
-                onClick={handleNext}
-                disabled={!canProceed()}
-                variant="contained"
+                onClick={handleBack}
+                disabled={activeStep === 0}
                 sx={{
-                  bgcolor: canProceed() ? symbioColors.teal.main : symbioColors.dark.border,
-                  "&:hover": { bgcolor: canProceed() ? symbioColors.teal.dark : symbioColors.dark.border },
-                  px: 3,
+                  color: symbioColors.silver.dark,
+                  "&:hover": { bgcolor: symbioColors.dark.card },
                 }}
               >
-                Next
+                Back
               </Button>
             )}
+
+            <Stack direction="row" spacing={2}>
+              {/* In settings mode, Back is a secondary button (kept so users
+                  can still move between sections) and Save is always available. */}
+              {isSettings && activeStep > 0 && (
+                <Button
+                  onClick={handleBack}
+                  disabled={saving}
+                  sx={{
+                    color: symbioColors.silver.dark,
+                    "&:hover": { bgcolor: symbioColors.dark.card },
+                  }}
+                >
+                  Back
+                </Button>
+              )}
+              {isSettings && activeStep < STEPS.length - 1 && (
+                <Button
+                  onClick={handleNext}
+                  sx={{
+                    color: symbioColors.silver.light,
+                    borderColor: symbioColors.dark.border,
+                    "&:hover": { bgcolor: symbioColors.dark.card },
+                  }}
+                  variant="outlined"
+                >
+                  Next
+                </Button>
+              )}
+
+              {isSettings ? (
+                <Button
+                  onClick={handleSave}
+                  disabled={saving}
+                  variant="contained"
+                  startIcon={<CheckCircleIcon />}
+                  sx={{
+                    bgcolor: symbioColors.teal.main,
+                    "&:hover": { bgcolor: symbioColors.teal.dark },
+                    px: 4,
+                  }}
+                >
+                  {saving ? "Saving..." : "Save Settings"}
+                </Button>
+              ) : activeStep === STEPS.length - 1 ? (
+                <Button
+                  onClick={handleSave}
+                  disabled={saving}
+                  variant="contained"
+                  startIcon={<CheckCircleIcon />}
+                  sx={{
+                    bgcolor: symbioColors.teal.main,
+                    "&:hover": { bgcolor: symbioColors.teal.dark },
+                    px: 4,
+                  }}
+                >
+                  {saving ? "Saving..." : "Launch Symbio!"}
+                </Button>
+              ) : (
+                <Button
+                  onClick={handleNext}
+                  disabled={!canProceed()}
+                  variant="contained"
+                  sx={{
+                    bgcolor: canProceed() ? symbioColors.teal.main : symbioColors.dark.border,
+                    "&:hover": { bgcolor: canProceed() ? symbioColors.teal.dark : symbioColors.dark.border },
+                    px: 3,
+                  }}
+                >
+                  Next
+                </Button>
+              )}
+            </Stack>
           </Stack>
         </Paper>
       </Container>

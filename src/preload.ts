@@ -439,6 +439,9 @@ contextBridge.exposeInMainWorld("symbioAPI", {
   // Save configuration from the setup wizard
   saveSetupConfig: (config: Record<string, unknown>) =>
     ipcRenderer.invoke("save-setup-config", config),
+  // Get the FULL current config (same shape as the wizard) for the Settings
+  // panel to pre-fill, so a save merges instead of wiping other settings.
+  getFullSetupConfig: () => ipcRenderer.invoke("get-full-setup-config"),
   // Get the current runtime config (after setup, this has updated values)
   getConfig: () => ipcRenderer.invoke("get-config"),
   // Listen for config updates from main process (after setup wizard saves)

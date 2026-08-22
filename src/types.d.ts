@@ -277,6 +277,7 @@ interface SymbioAPI {
   // Setup Wizard
   needsSetup: () => Promise<boolean>;
   saveSetupConfig: (config: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
+  getFullSetupConfig: () => Promise<Record<string, unknown>>;
   getConfig: () => Promise<Record<string, unknown>>;
   onConfigUpdated: (callback: (config: Record<string, unknown>) => void) => () => void;
   getConfig: () => Promise<Record<string, unknown>>;
