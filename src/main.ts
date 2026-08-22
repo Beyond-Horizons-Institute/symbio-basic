@@ -681,17 +681,28 @@ const createOverlayWindow = (
     minHeight: 400,
     alwaysOnTop: true,
     transparent: true,
+    // ── Symbio: Windows DWM transparency fix ──────────────────────
+    // On Windows, `transparent:true` needs an explicit fully-transparent
+    // backgroundColor (#AARRGGBB → "#00000000") or DWM may fail to compose
+    // the layer and render the window as a 0x0 / invisible shell. The HTML
+    // side (overlay/index.html + Overlay.tsx) must also set html/body/#root
+    // background:transparent.
+    backgroundColor: "#00000000",
+    // Don't show until the content has loaded — prevents a flash and the
+    // "empty shell" appearing before React/WebGL is ready. We call show()
+    // explicitly after did-finish-load below.
+    show: false,
     // ── Symbio: FRAMELESS on purpose ──────────────────────────────
-    // BUG (fixed): `transparent:true` + `frame:true` is broken on Windows —
-    // it renders as just a stuck title/menu bar with no content (exactly
-    // what the user saw). A transparent avatar overlay should be frameless
-    // anyway. We provide our own slim drag handle + close button in
-    // Overlay.tsx (via CSS -webkit-app-region) so it stays movable, and
-    // `resizable:true` keeps the edges draggable to resize.
+    // `transparent:true` + `frame:true` is broken on Windows — it renders as
+    // just a stuck title/menu bar with no content. A transparent avatar
+    // overlay should be frameless anyway. We provide our own slim drag handle
+    // + close button in Overlay.tsx (via CSS -webkit-app-region) so it stays
+    // movable, and `resizable:true` keeps the edges draggable to resize.
     frame: false,
     resizable: true,
-    // Skip the taskbar entry — it's a floating companion, not a top-level app.
-    skipTaskbar: true,
+    // NOTE: skipTaskbar removed — on Windows a frameless+skipTaskbar window can
+    // fail to get an initial z-index layer and hide BEHIND other apps/desktop.
+    // Keeping a taskbar entry also gives the user a reliable way to find it.
     hasShadow: false,
     x: overlayX,
     y: overlayY,
@@ -706,8 +717,27 @@ const createOverlayWindow = (
   overlayWindow.setPosition(overlayX, overlayY);
   overlayWindow.loadURL(OVERLAY_WINDOW_WEBPACK_ENTRY);
 
+  // Fallbacks so a hidden window (show:false) always becomes visible even if
+  // did-finish-load is delayed or an asset stalls: ready-to-show + a timeout.
+  overlayWindow.once("ready-to-show", () => overlayWindow?.show());
+  setTimeout(() => {
+    if (overlayWindow && !overlayWindow.isVisible()) overlayWindow.show();
+  }, 4000);
+
+  // ── Symbio: Force the window to actually appear (Windows z-index fix) ──
+  // On Windows a frameless/transparent window can be created but never
+  // properly shown or placed in the z-order, so it hides behind other apps
+  // (or the desktop) and looks like "nothing happened". After the content
+  // loads, explicitly show it, pin it above everything, and give it focus.
+  overlayWindow.webContents.on("did-finish-load", () => {
+    if (!overlayWindow) return;
+    overlayWindow.show();
+    overlayWindow.setAlwaysOnTop(true, "screen-saver");
+    overlayWindow.moveTop();
+    overlayWindow.focus();
+  });
+
   // ── Symbio: Debug DevTools for overlay ──────────────────────────
-  // The overlay has setFocusable(false) which blocks Ctrl+Shift+I.
   // Set DEBUG_OVERLAY=1 to auto-open DevTools on the overlay window.
   overlayWindow.webContents.on("did-finish-load", () => {
     if (process.env.DEBUG_OVERLAY === "1") {
