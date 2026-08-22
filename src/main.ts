@@ -681,13 +681,27 @@ const createOverlayWindow = (
     minHeight: 400,
     alwaysOnTop: true,
     transparent: true,
-    frame: true,
+    // ── Symbio: FRAMELESS on purpose ──────────────────────────────
+    // BUG (fixed): `transparent:true` + `frame:true` is broken on Windows —
+    // it renders as just a stuck title/menu bar with no content (exactly
+    // what the user saw). A transparent avatar overlay should be frameless
+    // anyway. We provide our own slim drag handle + close button in
+    // Overlay.tsx (via CSS -webkit-app-region) so it stays movable, and
+    // `resizable:true` keeps the edges draggable to resize.
+    frame: false,
     resizable: true,
+    // Skip the taskbar entry — it's a floating companion, not a top-level app.
+    skipTaskbar: true,
+    hasShadow: false,
     x: overlayX,
     y: overlayY,
   });
 
-  overlayWindow.setFocusable(false);
+  // NOTE: the overlay must stay FOCUSABLE so our CSS drag handle
+  // (-webkit-app-region: drag) can actually move the window and the edges
+  // can resize it. (Previously setFocusable(false) was called, which on a
+  // frameless window prevents dragging entirely.) alwaysOnTop keeps it
+  // visible above other apps regardless.
   // Belt-and-suspenders: ensure the window really is at a visible spot.
   overlayWindow.setPosition(overlayX, overlayY);
   overlayWindow.loadURL(OVERLAY_WINDOW_WEBPACK_ENTRY);

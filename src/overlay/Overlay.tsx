@@ -727,6 +727,71 @@ const Overlay = () => {
 
   return (
     <div style={{ height: "100%", width: "100%" }}>
+      {/* ── Drag handle ──────────────────────────────────────────────
+          The window is frameless (required for transparency to work on
+          Windows), so we provide our own slim, mostly-invisible strip at
+          the very top that the user can grab to MOVE the overlay. It uses
+          the Electron CSS drag region. A hover reveals a faint bar + a
+          close (✕) button. The close button is marked no-drag so it stays
+          clickable. Resizing works via the window edges (resizable:true). */}
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          height: 28,
+          zIndex: 10000,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          gap: 8,
+          padding: "0 8px",
+          // @ts-expect-error -- Electron-specific CSS property
+          WebkitAppRegion: "drag",
+          cursor: "grab",
+          background:
+            "linear-gradient(180deg, rgba(0,188,212,0.10), rgba(0,0,0,0))",
+          opacity: 0,
+          transition: "opacity 0.2s",
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")}
+        onMouseLeave={(e) => (e.currentTarget.style.opacity = "0")}
+        title="Drag to move Symbio"
+      >
+        <span
+          style={{
+            color: "#00e5ff",
+            fontSize: 10,
+            fontFamily: '"Inter", "Roboto", sans-serif',
+            letterSpacing: "0.08em",
+            opacity: 0.7,
+            userSelect: "none",
+          }}
+        >
+          ⠿ drag
+        </span>
+        <button
+          onClick={() => window.symbioAPI?.closeOverlay?.()}
+          style={{
+            // @ts-expect-error -- Electron-specific CSS property
+            WebkitAppRegion: "no-drag",
+            cursor: "pointer",
+            border: "none",
+            background: "rgba(0,0,0,0.35)",
+            color: "#ff7597",
+            fontSize: 13,
+            lineHeight: "18px",
+            width: 20,
+            height: 20,
+            borderRadius: 5,
+            padding: 0,
+          }}
+          title="Close avatar overlay"
+        >
+          ✕
+        </button>
+      </div>
       <Scene
         virtualText=""
         voiceUrl={voiceUrl}
