@@ -19,6 +19,8 @@ declare module "*.svg" {
 interface ElectronAPI {
   openOverlay: () => void;
   closeOverlay: () => void;
+  resizeOverlay: (delta: number) => void;
+  resetOverlaySize: () => void;
   openOverlayFrame: () => void;
   closeOverlayFrame: () => void;
   sendPrompt: (prompt: string) => void;
@@ -62,6 +64,8 @@ interface SymbioAPI {
   // Overlay management
   openOverlay: () => void;
   closeOverlay: () => void;
+  resizeOverlay: (delta: number) => void;
+  resetOverlaySize: () => void;
   openOverlayFrame: () => void;
   closeOverlayFrame: () => void;
   // Chat

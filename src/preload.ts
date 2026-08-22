@@ -66,6 +66,11 @@ contextBridge.exposeInMainWorld("symbioAPI", {
   // ── Overlay Window Management ──────────────────────────────────
   openOverlay: () => ipcRenderer.send("open-overlay"),
   closeOverlay: () => ipcRenderer.send("close-overlay"),
+  // Resize the overlay reliably via IPC (works on transparent frameless
+  // windows where dragging the invisible edges doesn't). delta = scale step
+  // (0.1 = grow 10%, -0.1 = shrink 10%).
+  resizeOverlay: (delta: number) => ipcRenderer.send("overlay-resize", delta),
+  resetOverlaySize: () => ipcRenderer.send("overlay-reset-size"),
 
   // ── Chat ───────────────────────────────────────────────────────
   sendPrompt: (prompt: string) => ipcRenderer.send("send-prompt", prompt),
@@ -447,6 +452,8 @@ contextBridge.exposeInMainWorld("symbioAPI", {
 contextBridge.exposeInMainWorld("electronAPI", {
   openOverlay: () => ipcRenderer.send("open-overlay"),
   closeOverlay: () => ipcRenderer.send("close-overlay"),
+  resizeOverlay: (delta: number) => ipcRenderer.send("overlay-resize", delta),
+  resetOverlaySize: () => ipcRenderer.send("overlay-reset-size"),
   sendPrompt: (prompt: string) => ipcRenderer.send("send-prompt", prompt),
   setPrompt: (prompt: string) => ipcRenderer.send("set-prompt", prompt),
   setHotMic: (isActive: boolean) =>

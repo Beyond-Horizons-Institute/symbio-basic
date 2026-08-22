@@ -52,7 +52,12 @@ export const COMPANIONS: Record<string, CompanionConfig> = {
   companion: {
     name: "companion",
     displayName: "Companion",
-    vrmPath: "symbio://assets/vrms/companion.vrm",
+    // Default avatar. Uses a normal-sized humanoid so the overlay framing is
+    // easy to gauge. The AI can switch to any of the 43 bundled avatars, and
+    // the human can drag & drop their own .vrm. (Was the tiny 317KB
+    // "assets/vrms/companion.vrm" cat, which was hard to see/scale.)
+    vrmPath:
+      "symbio://assets/avatars/digital_male_being_with_circuitry_pants/digital_male_being_with_circuitry_pants.vrm",
     soulPath: "",
     voiceId: "companion",
     personality:

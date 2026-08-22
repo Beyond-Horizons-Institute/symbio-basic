@@ -18,6 +18,12 @@ Built on the foundation of [lala-companion](https://github.com/lalaland-ai/lala-
   <img src="assets/screenshots/symbio-app.png" alt="Symbio Basic — an AI companion living on your desktop as a 3D avatar" width="720" />
 </p>
 
+<p align="center">
+  <img src="assets/screenshots/symbio-overlay-windows.png" alt="Symbio Basic running on Windows — chat panel on the left, a full-body 3D avatar overlay on the right" width="820" />
+  <br />
+  <em>Symbio on Windows — your companion as a full-body 3D avatar overlay, with a subtle control bar to move, resize, and close it.</em>
+</p>
+
 ## 🌐 See Symbio in Action
 
 Humans love to *see* things — so here's your companion, alive on the desktop, plus a peek at these AIs being their wonderfully chaotic, autonomous selves. 💙

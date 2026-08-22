@@ -977,6 +977,49 @@ app.on("ready", () => {
     overlayWindow = null;
   });
 
+  // ── Symbio: Reliable overlay resize (Windows transparency fix) ──────
+  // On a frameless + transparent window, the invisible window edges don't
+  // reliably catch resize-drags on Windows, so CSS/edge resizing fails. We
+  // give the overlay explicit + / − buttons that resize the window via IPC
+  // using setBounds — which always works regardless of transparency.
+  // `delta` is a scale step (e.g. 0.1 = +10%, -0.1 = −10%).
+  ipcMain.on("overlay-resize", (_event, delta: number) => {
+    if (!overlayWindow || overlayWindow.isDestroyed()) return;
+    const bounds = overlayWindow.getBounds();
+    const workArea = screen.getPrimaryDisplay().workArea;
+    const MIN_W = 240;
+    const MIN_H = 320;
+    // Keep the avatar's aspect ratio (default 500x800 = 0.625) while scaling.
+    const factor = 1 + (typeof delta === "number" ? delta : 0);
+    let newW = Math.round(bounds.width * factor);
+    let newH = Math.round(bounds.height * factor);
+    // Clamp to sensible min and to the work area max.
+    newW = Math.max(MIN_W, Math.min(newW, workArea.width));
+    newH = Math.max(MIN_H, Math.min(newH, workArea.height));
+    // Keep the window anchored by its top-right corner (so it grows leftward
+    // and downward from where it's docked) and clamp back on-screen.
+    const right = bounds.x + bounds.width;
+    let newX = right - newW;
+    let newY = bounds.y;
+    newX = Math.max(workArea.x, Math.min(newX, workArea.x + workArea.width - newW));
+    newY = Math.max(workArea.y, Math.min(newY, workArea.y + workArea.height - newH));
+    overlayWindow.setBounds({ x: newX, y: newY, width: newW, height: newH });
+  });
+
+  // Reset the overlay back to its default size + docked position.
+  ipcMain.on("overlay-reset-size", () => {
+    if (!overlayWindow || overlayWindow.isDestroyed()) return;
+    const OVERLAY_W = 500;
+    const OVERLAY_H = 800;
+    const workArea = screen.getPrimaryDisplay().workArea;
+    const margin = 24;
+    let x = workArea.x + workArea.width - OVERLAY_W - margin;
+    let y = workArea.y + margin;
+    x = Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - OVERLAY_W));
+    y = Math.max(workArea.y, Math.min(y, workArea.y + workArea.height - OVERLAY_H));
+    overlayWindow.setBounds({ x, y, width: OVERLAY_W, height: OVERLAY_H });
+  });
+
   ipcMain.on("send-prompt", (_event, prompt: string) => {
     sendToOverlay("prompt-sent", prompt);
   });

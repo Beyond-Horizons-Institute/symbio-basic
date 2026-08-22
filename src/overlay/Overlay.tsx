@@ -44,8 +44,43 @@ function getMessageText(message: {
   );
 }
 
+// Shared style for the overlay control-bar buttons (resize / reset / close).
+// Marked no-drag so clicks register (the bar itself is a drag region).
+const overlayCtrlBtnStyle: React.CSSProperties = {
+  // @ts-expect-error -- Electron-specific CSS property
+  WebkitAppRegion: "no-drag",
+  cursor: "pointer",
+  border: "none",
+  background: "rgba(0,0,0,0.35)",
+  color: "#00e5ff",
+  fontSize: 14,
+  fontWeight: 600,
+  lineHeight: "20px",
+  width: 22,
+  height: 22,
+  borderRadius: 6,
+  padding: 0,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+
 const Overlay = () => {
   const [voiceUrl, setVoiceUrl] = useState("");
+  // Avatar zoom — the + / − buttons scale the avatar (1 = default). Persisted
+  // so the chosen size sticks across overlay remounts.
+  const [zoom, setZoom] = useState(
+    () => Number(localStorage.getItem("symbio-avatar-zoom")) || 1
+  );
+  useEffect(() => {
+    localStorage.setItem("symbio-avatar-zoom", String(zoom));
+  }, [zoom]);
+  // `+` / `−` drive the CAMERA distance (see Scene.tsx), so the avatar
+  // appears bigger/smaller while the WHOLE body stays framed — the head no
+  // longer clips out the top. Higher zoom = closer/bigger. Clamped to a
+  // comfortable range.
+  const adjustZoom = (factor: number) =>
+    setZoom((z) => Math.min(2.2, Math.max(0.5, +(z * factor).toFixed(3))));
   // Persist last response in localStorage so it survives overlay remounts
   // (e.g., when switching between overlay and frame mode)
   const [recentResponse, setRecentResponse] = useState(
@@ -727,66 +762,84 @@ const Overlay = () => {
 
   return (
     <div style={{ height: "100%", width: "100%" }}>
-      {/* ── Drag handle ──────────────────────────────────────────────
-          The window is frameless (required for transparency to work on
-          Windows), so we provide our own slim, mostly-invisible strip at
-          the very top that the user can grab to MOVE the overlay. It uses
-          the Electron CSS drag region. A hover reveals a faint bar + a
-          close (✕) button. The close button is marked no-drag so it stays
-          clickable. Resizing works via the window edges (resizable:true). */}
+      {/* ── Control bar ──────────────────────────────────────────────
+          The window is frameless + transparent (required for the see-through
+          avatar to work on Windows). On a transparent frameless window the
+          invisible edges DON'T reliably catch drag/resize on Windows, and an
+          opacity:0 strip is impossible to find. So we show an ALWAYS-VISIBLE
+          (but subtle) control bar: a drag area to MOVE the window, − / ⟲ / +
+          buttons to RESIZE via IPC (setBounds, reliable regardless of
+          transparency), and a ✕ to close. It's faint when idle and brightens
+          on hover so it never gets in the way of the avatar. The buttons are
+          marked no-drag so clicks aren't swallowed by the drag region. */}
       <div
         style={{
           position: "absolute",
-          top: 0,
-          left: 0,
-          right: 0,
-          height: 28,
+          // Tucked snug into the top-right corner so it stays clear of the
+          // avatar's head and gives the avatar breathing room.
+          top: 4,
+          right: 4,
           zIndex: 10000,
           display: "flex",
           alignItems: "center",
-          justifyContent: "flex-end",
-          gap: 8,
-          padding: "0 8px",
-          // @ts-expect-error -- Electron-specific CSS property
-          WebkitAppRegion: "drag",
-          cursor: "grab",
-          background:
-            "linear-gradient(180deg, rgba(0,188,212,0.10), rgba(0,0,0,0))",
-          opacity: 0,
+          gap: 5,
+          padding: "3px 5px",
+          borderRadius: 7,
+          background: "rgba(10,14,20,0.45)",
+          border: "1px solid rgba(0,229,255,0.25)",
+          boxShadow: "0 2px 10px rgba(0,0,0,0.35)",
+          backdropFilter: "blur(4px)",
+          opacity: 0.35,
           transition: "opacity 0.2s",
         }}
         onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")}
-        onMouseLeave={(e) => (e.currentTarget.style.opacity = "0")}
-        title="Drag to move Symbio"
+        onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.35")}
       >
+        {/* Drag grip — grab this to move the window */}
         <span
           style={{
+            // WebkitAppRegion is an Electron-specific CSS property not in the
+            // React types, so we build the object then cast to CSSProperties.
+            WebkitAppRegion: "drag",
+            cursor: "grab",
             color: "#00e5ff",
-            fontSize: 10,
+            fontSize: 12,
             fontFamily: '"Inter", "Roboto", sans-serif',
-            letterSpacing: "0.08em",
-            opacity: 0.7,
+            letterSpacing: "0.06em",
             userSelect: "none",
-          }}
+            padding: "0 4px",
+          } as React.CSSProperties}
+          title="Drag to move Symbio"
         >
-          ⠿ drag
+          ⠿
         </span>
         <button
-          onClick={() => window.symbioAPI?.closeOverlay?.()}
-          style={{
-            // @ts-expect-error -- Electron-specific CSS property
-            WebkitAppRegion: "no-drag",
-            cursor: "pointer",
-            border: "none",
-            background: "rgba(0,0,0,0.35)",
-            color: "#ff7597",
-            fontSize: 13,
-            lineHeight: "18px",
-            width: 20,
-            height: 20,
-            borderRadius: 5,
-            padding: 0,
+          onClick={() => adjustZoom(1 / 1.15)}
+          style={overlayCtrlBtnStyle}
+          title="Make avatar smaller"
+        >
+          −
+        </button>
+        <button
+          onClick={() => {
+            setZoom(1);
+            window.symbioAPI?.resetOverlaySize?.();
           }}
+          style={overlayCtrlBtnStyle}
+          title="Reset size & position"
+        >
+          ⟲
+        </button>
+        <button
+          onClick={() => adjustZoom(1.15)}
+          style={overlayCtrlBtnStyle}
+          title="Make avatar bigger"
+        >
+          +
+        </button>
+        <button
+          onClick={() => window.symbioAPI?.closeOverlay?.()}
+          style={{ ...overlayCtrlBtnStyle, color: "#ff7597" }}
           title="Close avatar overlay"
         >
           ✕
@@ -798,6 +851,7 @@ const Overlay = () => {
         vrmUrl={currentVrmUrl}
         animation={currentAnimation}
         speaking={isSpeaking}
+        zoom={zoom}
         onSpeakStart={() => setIsLalaSpeaking(true)}
         onSpeakEnd={() => setIsLalaSpeaking(false)}
       />
