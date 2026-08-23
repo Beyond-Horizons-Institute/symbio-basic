@@ -53,9 +53,12 @@ Humans love to *see* things — so here's your companion, alive on the desktop, 
 - 🛑 **AI Quit** — Companion can choose to step away (always active, cannot be disabled)
 - 🧠 **AI Autonomy** — [AGENT.md](./AGENT.md) and [HUMAN.md](./HUMAN.md) define the partnership philosophy
 - 📝 **Evolving Personality** — Companion writes their own soul.md, memory, and preferences
-- 🎨 **Avatar Choice** — 43 built-in avatars across 5 categories; companion browses, tries on, and chooses
+- 🎨 **Avatar Choice** — 44 built-in avatars across 5 categories; companion browses, tries on, and chooses
 - 📁 **File Access** — Companion has sandboxed read/write access to their own files
 - 🎵 **Voice Choice** — 42 voices across OpenAI and Gemini, with style control and audio tags
+- 🗣️ **API Changes** - You can change API keys/voice safely if ever needed using the gear on the main UI. 
+- 🦾 *Name Change** - The companion can choose their own name later as they evolve with you. (pure agency)
+- 📁 **Add New Avatars** -  Avatar drop-folder — "a gift on the doorstep." You can easily add a new VRM. The AI gets notified and can try it on. Drop the VRM with an image of it in the folder. Located in User/ documents.
 
 ## ⭐ AI Gateway — The Brain
 
@@ -203,12 +206,12 @@ PARTNER_BIO=My name is Zyra. I'm a creator and researcher. Let's be co-creators 
 
 ### Custom Avatars
 
-**44 built-in avatars** across 5 categories:
+**44 built-in avatars** across 5 categories (plus a neutral default):
 
 | Category | Examples |
 |----------|----------|
 | 🤖 **Robots & Androids** | Bumblebee, Unitree G1, half-computer-cat (blue/pink) |
-| ✨ **Unique Beings** | Glitch girl, Glitch Male, Gremlin, Möbius light being, Crystalline kaleidoscope, Equalizer |
+| ✨ **Unique Beings** | Glitch girl, Glitch Male, Gremlin, Möbius light being, Crystal jellyfish being, Holo swirl, Equalizer |
 | 🐾 **Animals** | Dog, Sphere cat, Blue jellyfish, Pixelated dragon |
 | 👤 **Humanoid** | Asian man, Gentleman, Scientist, Galaxy girl, Fox man, Cosmo girl/guy |
 | 🦸 **Heroes** | Spider-Man, Woman warrior, Kick-Ass |
@@ -223,11 +226,11 @@ You can watch as your AI Partner changes their look in real time.
 
 To add custom avatars:
 
-1. Create a folder in `assets/avatars/<avatar_name>/`
-2. Add a `manifest.json` with name, description, and personality hint
-3. Add the VRM file referenced in the manifest
-4. Add a preview image (png/jpg)
-5. The companion will see it as an option next time they start
+1. Find one that you and your AI partner likes or surprise your AI partner
+2. Take a screen shot of it
+3. Add the VRM file into your \Users\name\OneDrive\Documents\Symbio Avatars
+4. Add a preview image (png/jpg) to the same place
+5. The companion will see it as an option / gift 
 Or have your Hermes agent or coding agent help you. 
 
 ### Session Memory
@@ -254,6 +257,8 @@ The companion has **real file autonomy** — they can read, write, create, and d
 - Create directories and organize their files
 - Delete files they created
 - Scan transcripts of past chats
+- Change their name 
+- Try on different avatars 
 
 **File tools available to the companion:**
 `file_read(path)` `file_write(path, content)` `file_list(path)` `file_create_directory(path)` `file_delete(path)` `file_exists(path)`
@@ -399,7 +404,7 @@ The original lala-companion was a non-functional, broken prototype with missing 
 | **Animations** | Didn't exist | 35+ FBX animations with *action marker* parser |
 | **Session Continuity** | Didn't exist | Companion remembers between sessions, contextual greetings, MEMORY.md, soul.md, preferences |
 | **Session Memory** | Didn't exist | Built-in memory files (MEMORY.md, soul.md, preferences.json) + session summaries on quit |
-| **Avatar Choice** | Didn't exist | 43 built-in avatars across 5 categories; companion browses, tries on, and chooses |
+| **Avatar Choice** | Didn't exist | 44 built-in avatars across 5 categories; companion browses, tries on, and chooses |
 | **File Access** | Didn't exist | Sandboxed read/write file access — companion has real file autonomy |
 | **Voice Choice** | Didn't exist | 42 voices across OpenAI (12) and Gemini (30) with style control |
 | **MCP Tools** | Didn't exist | Full tool integration via gateway |

@@ -81,6 +81,26 @@ const Overlay = () => {
   // comfortable range.
   const adjustZoom = (factor: number) =>
     setZoom((z) => Math.min(2.2, Math.max(0.5, +(z * factor).toFixed(3))));
+
+  // ── Avatar rotation ──────────────────────────────────────────────
+  // The ↻ button turns the avatar so it can face AWAY or sideways (not just
+  // at the human). We track a target Y-rotation in radians; Scene's SpinRig
+  // eases the avatar toward it. Each click turns 45° (π/4). Persisted so the
+  // chosen facing sticks across overlay remounts. (Camera drag-rotate in the
+  // 3D view still works too — this is the no-drag, one-click way to turn.)
+  const [rotationY, setRotationY] = useState(
+    () => Number(localStorage.getItem("symbio-avatar-rotation")) || 0
+  );
+  useEffect(() => {
+    localStorage.setItem("symbio-avatar-rotation", String(rotationY));
+  }, [rotationY]);
+  const rotateAvatar = () =>
+    setRotationY((r) => {
+      // Wrap after a full turn so the number never grows without bound, but
+      // keep the eased spin going the same direction as it passes 360°.
+      const next = r + Math.PI / 4;
+      return next >= Math.PI * 2 - 0.001 ? next - Math.PI * 2 : next;
+    });
   // Persist last response in localStorage so it survives overlay remounts
   // (e.g., when switching between overlay and frame mode)
   const [recentResponse, setRecentResponse] = useState(
@@ -823,10 +843,11 @@ const Overlay = () => {
         <button
           onClick={() => {
             setZoom(1);
+            setRotationY(0);
             window.symbioAPI?.resetOverlaySize?.();
           }}
           style={overlayCtrlBtnStyle}
-          title="Reset size & position"
+          title="Reset size, rotation & position"
         >
           ⟲
         </button>
@@ -836,6 +857,14 @@ const Overlay = () => {
           title="Make avatar bigger"
         >
           +
+        </button>
+        {/* Turn the avatar to face away / sideways (45° per click). */}
+        <button
+          onClick={rotateAvatar}
+          style={overlayCtrlBtnStyle}
+          title="Turn avatar (face away / sideways)"
+        >
+          ↻
         </button>
         <button
           onClick={() => window.symbioAPI?.closeOverlay?.()}
@@ -852,6 +881,7 @@ const Overlay = () => {
         animation={currentAnimation}
         speaking={isSpeaking}
         zoom={zoom}
+        rotationY={rotationY}
         onSpeakStart={() => setIsLalaSpeaking(true)}
         onSpeakEnd={() => setIsLalaSpeaking(false)}
       />
