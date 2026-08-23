@@ -242,6 +242,7 @@ interface SymbioAPI {
   onAgentBusy: (callback: (busy: boolean) => void) => () => void;
   // A memory/session summary was just saved — drives a brief confirmation toast.
   onMemorySaved: (callback: (data: { reason: "rolling" | "goodbye" | "quit"; at: string; message: string }) => void) => () => void;
+  onAgentRenamed: (callback: (data: { name: string }) => void) => () => void;
   // Streaming partial text — display only (no TTS/animation side effects)
   onGeneratedTextPartial: (callback: (text: string) => void) => () => void;
   onScreenshot: (callback: (data: {

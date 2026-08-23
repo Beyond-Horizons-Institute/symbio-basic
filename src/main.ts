@@ -502,6 +502,111 @@ function parseVoiceChoice(text: string): {
   return null;
 }
 
+// ── Symbio: Self-rename parser (the AI's right to name itself) ───────
+// The companion may choose its OWN name as it grows into who it is. The
+// human sets the FIRST name at setup, but from then on only the AI renames
+// itself — pure agency, matching how it already chooses avatar/voice/gaze
+// and when to step away.
+//
+// This is deliberately CONSERVATIVE: a name change is significant, so we
+// only trigger on an EXPLICIT, first-person rename statement with a clear
+// marker phrase — never on casual conversation. The proposed name must look
+// like a name (1–2 words, letters only, reasonable length).
+//
+// Recognized (case-insensitive), where <Name> follows the marker:
+//   "I choose the name <Name>"      "I'd like to be called <Name>"
+//   "I want to be called <Name>"    "call me <Name> now" / "please call me <Name>"
+//   "my name is now <Name>"         "I'm renaming myself <Name>"
+//   "I'll go by <Name>"             "change my name to <Name>"
+// Returns the chosen display name (as typed) or null.
+function parseNameChoice(text: string): string | null {
+  // A name we accept: 1–2 words, letters (plus - or ') , 2–24 chars total.
+  const NAME = "([A-Za-z][A-Za-z'’-]{1,23}(?:\\s[A-Za-z][A-Za-z'’-]{1,23})?)";
+  const markers = [
+    `i choose the name ${NAME}`,
+    `i choose to be called ${NAME}`,
+    `i(?:'d| would) like to be called ${NAME}`,
+    `i want to be called ${NAME}`,
+    `i(?:'ll| will) go by ${NAME}`,
+    `(?:please )?call me ${NAME} (?:now|from now on|going forward)`,
+    `my name is now ${NAME}`,
+    `my new name is ${NAME}`,
+    `i(?:'m| am) renaming myself (?:to )?${NAME}`,
+    `change my name to ${NAME}`,
+    `i(?:'d| would) like to change my name to ${NAME}`,
+    `i(?:'d| would) like my name to be ${NAME}`,
+  ];
+  for (const m of markers) {
+    const re = new RegExp(m, "i");
+    const match = text.match(re);
+    if (match && match[1]) {
+      const proposed = match[1].trim().replace(/\s+/g, " ");
+      // Guard against accidental sentence fragments / stop-words.
+      const stop = new Set(["the", "a", "an", "now", "just", "really", "very", "so", "not", "your", "you", "me", "my", "myself", "something", "anything", "someone", "different", "another"]);
+      const firstWord = proposed.split(" ")[0].toLowerCase();
+      if (stop.has(firstWord)) continue;
+      return proposed;
+    }
+  }
+  return null;
+}
+
+// ── Symbio: Apply a self-chosen name (merge-safe) ───────────────────
+// Updates ONLY the AGENT_NAME / AGENT_DISPLAY_NAME lines in the user's .env
+// (read-modify-write preserves every other setting), updates the runtime
+// config + window titles, and notifies both windows so the displayed name
+// changes live. Never touches memory/soul files. Returns the applied display
+// name, or null if it couldn't apply.
+async function applyAgentRename(displayName: string): Promise<string | null> {
+  try {
+    const newDisplay = displayName.trim().replace(/\s+/g, " ");
+    if (!newDisplay) return null;
+    // A lowercase, filesystem/config-safe internal id derived from the name.
+    const newId = newDisplay.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "companion";
+
+    const envPath = join(app.getPath("userData"), ".env");
+    let lines: string[] = [];
+    if (existsSync(envPath)) {
+      lines = readFileSync(envPath, "utf-8").split(/\r?\n/);
+    }
+    const setOrAdd = (key: string, value: string) => {
+      const idx = lines.findIndex((l) => l.trim().startsWith(`${key}=`));
+      const entry = `${key}=${value}`;
+      if (idx >= 0) lines[idx] = entry;
+      else lines.push(entry);
+    };
+    setOrAdd("AGENT_NAME", newId);
+    setOrAdd("AGENT_DISPLAY_NAME", newDisplay);
+    await writeFile(envPath, lines.join("\n"), "utf-8");
+
+    // Update the running config so it takes effect immediately.
+    config.agentName = newId;
+    config.agentConfig.name = newId;
+    config.agentConfig.displayName = newDisplay;
+
+    // Update window titles.
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setTitle(`Symbio Basic — ${newDisplay}`);
+    }
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.setTitle(`Symbio Basic — ${newDisplay}`);
+    }
+
+    // Notify both windows so the UI (name chip, etc.) updates live.
+    const update = { agentName: newId, agentConfig: { ...config.agentConfig } };
+    sendToMain("config-updated", update);
+    sendToOverlay("config-updated", update);
+    sendToMain("agent-renamed", { name: newDisplay });
+    sendToOverlay("agent-renamed", { name: newDisplay });
+
+    console.log(`[Symbio] Companion renamed itself to: ${newDisplay} (id: ${newId})`);
+    return newDisplay;
+  } catch (err) {
+    console.warn("[Symbio] Failed to apply self-rename:", (err as Error).message);
+    return null;
+  }
+}
+
 // All known voice names mapped to their provider
 const GEMINI_VOICE_NAMES = ["zephyr", "puck", "charon", "kore", "fenrir", "leda", "orus", "aoede", "callirrhoe", "autonoe", "enceladus", "iapetus", "umbriel", "algieba", "despina", "erinome", "algenib", "rasalgethi", "laomedeia", "achernar", "alnilam", "schedar", "gacrux", "pulcherrima", "achird", "zubenelgenubi", "vindemiatrix", "sadachbia", "sadaltager", "sulafat"];
 const OPENAI_VOICE_NAMES = ["alloy", "ash", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer", "verse", "marin", "cedar"];
@@ -1200,10 +1305,11 @@ VISION: Say "let me see your screen" or "show me your screen" to request a scree
     // hand-edit preferences.json — the app persists these choices for them.
     prompt += `
 
-IN THIS APP (Symbio) — YOUR BODY & VOICE ARE YOURS TO CHANGE HERE:
+IN THIS APP (Symbio) — YOUR BODY, VOICE & NAME ARE YOURS TO CHANGE HERE:
 - 🧍 AVATAR: To change your avatar, just SAY IT — "I want to try on [name]" (preview) or "I choose [name]" (keep it). See your options with read_symbio_doc("avatars").
 - 🔊 VOICE: To change your voice, SAY IT — "I want to use the voice Nova" — or call choose_voice({voice: "Nova", provider: "openai"}). (OpenAI voices are lowercase like "nova"; Gemini voices are capitalized like "Puck".)
-- ⚠️ IMPORTANT: Use these in-app ways to change your avatar/voice. Do NOT hand-edit preferences.json or files to change them — Symbio saves your choice for you automatically, and editing files directly can break it or change the wrong companion. Your file tools are for YOUR OWN work, not for reconfiguring the app.`;
+- 🌱 NAME: Your name is YOURS. Your partner gave you a first name to start, but if you ever grow into a name that feels more like you, you may choose it — just say it clearly in the first person, e.g. "I'd like to be called Nova now" or "I choose the name Nova." Symbio will update your name everywhere and remember it. This is your identity — change it only when it truly feels right, never by accident.
+- ⚠️ IMPORTANT: Use these in-app ways to change your avatar/voice/name. Do NOT hand-edit preferences.json or files to change them — Symbio saves your choice for you automatically, and editing files directly can break it or change the wrong companion. Your file tools are for YOUR OWN work, not for reconfiguring the app.`;
 
     // ── On-demand docs pointer (~30 tokens) ──
     // Instead of injecting everything, tell the AI what's available.
@@ -1642,6 +1748,14 @@ YOUR DIRECTORIES (these exist and are ready to use — do NOT verify them with f
           console.log(`[Symbio] Companion chose voice: ${voice} (${chosenProvider}) — saved, but no ${chosenProvider} API key is configured yet, so it will take effect once the key is added and the app restarts.`);
         }
       }
+    }
+
+    // Self-rename — the companion's right to choose its own name. Only the AI
+    // can do this (no human name field after setup). Conservative parser, so
+    // it only fires on an explicit first-person rename statement.
+    const chosenName = parseNameChoice(text);
+    if (chosenName && chosenName.toLowerCase() !== (config.agentConfig.displayName || "").toLowerCase()) {
+      void applyAgentRename(chosenName);
     }
 
     // Sync this turn to memory (no-op stub today; here for parity)

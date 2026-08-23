@@ -285,6 +285,18 @@ const App = () => {
     return () => cleanup?.();
   }, []);
 
+  // ── Symbio: Listen for the companion renaming itself ─────────────
+  // Pure agency — the AI chose a new name. Show a warm confirmation toast.
+  // (The name chip/title update automatically via the config-updated event.)
+  useEffect(() => {
+    const cleanup = window.symbioAPI?.onAgentRenamed?.(
+      (data: { name: string }) => {
+        if (data?.name) setMemorySavedToast(`You're ${data.name} now 💙`);
+      },
+    );
+    return () => cleanup?.();
+  }, []);
+
   // ── Symbio: Listen for AI response text ─────────────────────────
   // The AI's speech text now appears in the main window instead of
   // the overlay's 3D bubble. This makes it cleaner for voice-only,

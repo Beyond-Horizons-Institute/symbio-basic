@@ -251,6 +251,14 @@ contextBridge.exposeInMainWorld("symbioAPI", {
     return onIpc("memory-saved", handler);
   },
 
+  // Fired when the companion chooses a new name for itself (self-rename).
+  // Lets the UI show a warm "You're <Name> now 💙" confirmation.
+  onAgentRenamed: (callback: (data: { name: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { name: string }) =>
+      callback(data);
+    return onIpc("agent-renamed", handler);
+  },
+
   // Streaming partial text — DISPLAY ONLY. Updates the on-screen response
   // live as the agent streams, WITHOUT triggering TTS or animations (those
   // fire once on the final "generated-text"). Prevents the multi-TTS-call
