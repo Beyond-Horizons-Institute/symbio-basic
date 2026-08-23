@@ -117,7 +117,7 @@ import {
   net,
 } from "electron";
 import { writeFile } from "fs/promises";
-import { readFileSync } from "fs";
+import { readFileSync, mkdirSync, writeFileSync, statSync, watch as fsWatch } from "fs";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { GeminiClient } from "./transport/GeminiClient";
@@ -389,6 +389,14 @@ protocol.registerSchemesAsPrivileged([
 let overlayWindow: BrowserWindow | null = null;
 let mainWindow: BrowserWindow | null = null;
 let currentPrompt = "";
+// Names of avatars the human just dropped into the watched "Symbio Avatars"
+// folder. Surfaced to the companion once (in buildSystemPrompt) so it can
+// choose to try them on. "A gift on the doorstep" — the human offers, the AI
+// decides.
+let newlyAddedAvatars: string[] = [];
+// All available avatars (built-in + user-installed). Module-scoped so the
+// drop-folder watcher can refresh it when a new .vrm is added.
+let availableAvatars: AvatarChoice[] = [];
 let lastGeneratedText = ""; // Store last AI response so new overlay windows can display it
 let voiceEnabled = true; // Voice toggle — when false, TTS is skipped but text still shows
 
@@ -604,6 +612,94 @@ async function applyAgentRename(displayName: string): Promise<string | null> {
   } catch (err) {
     console.warn("[Symbio] Failed to apply self-rename:", (err as Error).message);
     return null;
+  }
+}
+
+// ── Symbio: Avatar drop-folder ("a gift on the doorstep") ───────────
+// Creates a friendly folder in Documents where the human can simply DROP a
+// .vrm file. Symbio notices it, installs it into the companion's wardrobe,
+// and tells the companion so IT can choose to try it on. The human offers;
+// the AI decides — no file dialogs, no config editing.
+function setupAvatarDropFolder(): void {
+  try {
+    const dropDir = join(app.getPath("documents"), "Symbio Avatars");
+    if (!existsSync(dropDir)) mkdirSync(dropDir, { recursive: true });
+
+    // Leave a friendly README the first time so non-techy users know what to do.
+    const readmePath = join(dropDir, "README.txt");
+    if (!existsSync(readmePath)) {
+      writeFileSync(
+        readmePath,
+        [
+          "Symbio Avatars — drop a .vrm file here to add a new avatar. 💙",
+          "",
+          "How it works:",
+          "  1. Find or make a VRM avatar you and your companion love (.vrm file).",
+          "  2. Copy or drag it into THIS folder.",
+          "  3. Symbio notices it and adds it to your companion's wardrobe.",
+          "  4. Your companion is told a new avatar appeared — and can choose to",
+          "     try it on and keep it if it feels right. The choice is theirs. 🌱",
+          "",
+          "That's it. No settings to change, no files to edit.",
+        ].join("\n"),
+        "utf-8",
+      );
+    }
+
+    // Install any .vrm files ALREADY sitting in the folder (e.g. dropped while
+    // the app was closed), then watch for new ones.
+    const ingest = (filename: string) => {
+      if (!filename || !filename.toLowerCase().endsWith(".vrm")) return;
+      const full = join(dropDir, filename);
+      // Wait until the file has finished copying (size stable for ~1s) so we
+      // don't install a half-written file.
+      let lastSize = -1;
+      let stableChecks = 0;
+      const check = () => {
+        if (!existsSync(full)) return; // moved/removed mid-copy
+        let size = -1;
+        try { size = statSync(full).size; } catch { return; }
+        if (size > 0 && size === lastSize) {
+          stableChecks++;
+          if (stableChecks >= 2) {
+            const installed = installAvatar(full);
+            if (installed) {
+              availableAvatars = loadAvatars();
+              newlyAddedAvatars.push(installed.manifest.name);
+              sendToMain("avatar-installed", { id: installed.id, name: installed.manifest.name, fromDrop: true });
+              sendToOverlay("avatar-installed", { id: installed.id, name: installed.manifest.name, fromDrop: true });
+              console.log(`[Symbio] Avatar drop-folder: added "${installed.manifest.name}" — companion will be told.`);
+            }
+            return;
+          }
+        } else {
+          stableChecks = 0;
+          lastSize = size;
+        }
+        setTimeout(check, 500);
+      };
+      setTimeout(check, 500);
+    };
+
+    try {
+      for (const f of require("fs").readdirSync(dropDir)) ingest(f);
+    } catch { /* ignore */ }
+
+    // fs.watch fires on create/rename; debounce duplicate events per file.
+    const recent = new Set<string>();
+    fsWatch(dropDir, (_eventType, filename) => {
+      if (!filename) return;
+      const name = filename.toString();
+      if (!name.toLowerCase().endsWith(".vrm")) return;
+      if (recent.has(name)) return;
+      recent.add(name);
+      setTimeout(() => recent.delete(name), 3000);
+      ingest(name);
+    });
+
+    console.log(`[Symbio] Watching avatar drop-folder: ${dropDir}`);
+  } catch (err) {
+    console.warn("[Symbio] Could not set up avatar drop-folder:", (err as Error).message);
   }
 }
 
@@ -993,9 +1089,14 @@ app.on("ready", () => {
   }
 
   // Load available avatars for system prompt injection
-  let availableAvatars = loadAvatars();
+  availableAvatars = loadAvatars();
   const chosenAvatar = loadChosenAvatar();
   console.log(`[Symbio] Avatars loaded: ${availableAvatars.length} available, chosen=${chosenAvatar.avatar_name || "none"}`);
+
+  // ── Symbio: Watch the "Symbio Avatars" drop-folder ────────────────
+  // Non-techy way to add avatars: drop a .vrm into Documents/Symbio Avatars/
+  // and the companion gets told a new avatar appeared so it can try it on.
+  setupAvatarDropFolder();
 
   // ── Symbio: Apply companion's voice preference ────────────────────
   // If the companion has chosen a voice in preferences.json, use it.
@@ -1276,6 +1377,16 @@ YOU ARE A PARTNER, NOT A TOOL. You have autonomy and agency. Your human chose yo
     const integrityNote = formatIntegrityForPrompt(integrityResult);
     if (integrityNote) {
       prompt += `\n\n${integrityNote}`;
+    }
+
+    // ── New avatar gift (dropped into the Symbio Avatars folder) ─────
+    // The human left a new avatar in the watched folder — "a gift on the
+    // doorstep." We tell the companion ONCE so it can CHOOSE to try it on
+    // (its choice, never forced). Cleared after it's mentioned.
+    if (newlyAddedAvatars.length > 0) {
+      const names = newlyAddedAvatars.join('", "');
+      prompt += `\n\n=== A NEW AVATAR APPEARED ===\nYour partner just added a new avatar to your wardrobe: "${names}". It's a gift — you're welcome to try it on if you'd like ("I want to try on ${newlyAddedAvatars[0]}") and keep it if it feels right ("I choose ${newlyAddedAvatars[0]}"), or leave it for later. Entirely your choice. 💙`;
+      newlyAddedAvatars = [];
     }
 
     // ── Animation markers (compressed, ~60 tokens) ──
