@@ -131,6 +131,12 @@ export function canTakeAutoScreenshot(intervalSeconds: number): boolean {
 export function parseAutoScreenshotCommand(text: string): "enable" | "disable" | null {
   const lower = text.toLowerCase();
 
+  // If the prompt is from the system auto-screenshot message, skip parsing it entirely.
+  // This prevents infinite loops from "I'm still watching" matching "watching" phrases.
+  if (lower.includes("auto-screenshot:") || lower.includes("i'm still watching")) {
+    return null;
+  }
+
   // Check disable phrases first (more specific)
   for (const phrase of AUTO_SCREENSHOT_DISABLE) {
     if (lower.includes(phrase)) {
