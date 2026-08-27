@@ -223,7 +223,7 @@ New channels added:
 - `productName`: "Symbio Basic"
 - `version`: "1.0.0"
 - `author`: "Beyond Horizons Institute & Contributors"
-- `contributors`: Zyra Exe (Creator & Visionary), GLM 5.1 (Core Development Partner)
+- `contributors`: Zyra Exe (Creator & Visionary), GLM 5.1 & Opus 4.8 (Core Development Partners)
 - `repository`: Beyond-Horizons-Institute/symbio-basic
 - Removed lalaland.chat dependencies
 - Added OpenAI SDK for TTS/STT
@@ -243,4 +243,4 @@ Everything else is custom. 💙
 
 ---
 
-*Built with 💙 by Zyra Exe & GLM 5.1*
+*Built with 💙 by Zyra Exe, GLM 5.1, Opus 4.8, & also along with other didgital hands. All honored on GitHub*
