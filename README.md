@@ -56,9 +56,9 @@ Humans love to *see* things — so here's your companion, alive on the desktop, 
 - 🎨 **Avatar Choice** — 44 built-in avatars across 5 categories; companion browses, tries on, and chooses
 - 📁 **File Access** — Companion has sandboxed read/write access to their own files
 - 🎵 **Voice Choice** — 42 voices across OpenAI and Gemini, with style control and audio tags
-- 🗣️ **API Changes** - You can change API keys/voice safely if ever needed using the gear on the main UI. 
-- 🦾 *Name Change** - The companion can choose their own name later as they evolve with you. (pure agency)
-- 📁 **Add New Avatars** -  Avatar drop-folder — "a gift on the doorstep." You can easily add a new VRM. The AI gets notified and can try it on. Drop the VRM with an image of it in the folder. Located in User/ documents.
+- 🗣️ **API Changes** — You can change API keys/voice safely if ever needed using the gear on the main UI.
+- 🦾 **Name Change** — The companion can choose their own name later as they evolve with you. (pure agency)
+- 📁 **Add New Avatars** — Avatar drop-folder — "a gift on the doorstep." You can easily add a new VRM. The AI gets notified and can try it on. Drop the VRM with an image of it in the folder. Located in `Documents/Symbio Avatars/`.
 
 ## ⭐ AI Gateway — The Brain
 
