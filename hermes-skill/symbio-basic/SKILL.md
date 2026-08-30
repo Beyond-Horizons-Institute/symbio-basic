@@ -139,7 +139,7 @@ Because Symbio talks to the **same** Hermes agent, memory flows both ways:
 
 - **Companion is silent (no voice):** No TTS provider configured. Add an OpenAI or Gemini API key via the ⚙️ gear or `.env`, then restart.
 - **Tools missing through Symbio (no terminal/memory):** The gateway's `api_server` toolset wasn't set — add the `platform_toolsets.api_server` block above and restart the gateway.
-- **Voice/avatar change didn't apply:** These take effect on next restart (by design). Restart Symbio.
+- **Voice/avatar change didn't apply:** Changes normally apply **live**, right away. If it doesn't seem to catch, try rewording the request naturally in the first person (e.g. "I choose the voice Puck" / "I choose [avatar] as my avatar") — the exact phrasing helps it register. If it still hasn't changed, a restart of Symbio will apply it.
 - **Windows overlay off-screen / invisible:** Fixed in v1.0.1+. Make sure the human is on the latest release.
 - **New avatar not showing:** Drop BOTH the `.vrm` AND a preview image into `Documents/Symbio Avatars/`; the AI is then notified and can try it on.
 - **Changing an API key felt risky:** Reassure the human — the ⚙️ Settings/gear merges only the changed setting and never overwrites `soul.md`, `MEMORY.md`, or `preferences.json`.
