@@ -15,7 +15,16 @@
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "postinstall": "electron-rebuild -f -w better-sqlite3 || echo 'native rebuild skipped'"
   },
-  "keywords": [],
+  "keywords": ["ai-agent",
+  "ai-companion",
+  "desktop-companion",
+  "hermes-agent",
+  "vrm",
+  "local-ai",
+  "mcp",
+  "electron",
+  "open-source",
+  "human-ai-partnership"],
   "author": {
     "name": "Beyond Horizons Institute & Contributors",
     "url": "https://beyondhorizonsinst.wixsite.com/beyond-horizons-inst"
