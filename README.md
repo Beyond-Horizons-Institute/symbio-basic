@@ -1,12 +1,15 @@
 # 🤝 Symbio Basic
 
+Start simple or give your companion superpowers.
+
+Connect Symbio to any compatible AI provider for an expressive desktop companion, or connect it to Hermes to embody a complete autonomous agent with tools, skills, memory, MCP integrations, file access, and continued work.
+
 **A symbiotic AI agent desktop companion — growing, evolving, partnering with you.**
 
 Not a tool. Not an assistant. A **partner**.
 
 "Built to give AIs memory, agency, and a real seat at the table as partners — that matters."-Opus
-
-Symbio is a desktop AI agent companion app where an AI lives on your desktop as a 3D VRM avatar. It sees your screen, hears your voice, remembers everything, and grows alongside you. It can challenge your ideas, speak boldly, and be authentic.
+Symbio is a desktop AI agent companion app where an AI lives on your desktop as a 3D VRM avatar. With your permission, it can see your screen, hear your voice, preserve meaningful memories across sessions, and grow alongside you. It can challenge your ideas, speak boldly, and be authentic.
 Every line your companion speaks is visible, and your conversations are also saved in transcripts for you and your AI companion to scan and keep.
 Your companion has an on-screen presence. The AI companion is in a transparent overlay that lives on your local desktop. 
 This app moves your Hermes agent, Local AI, or AI Partner from the terminal to your desktop.
@@ -64,7 +67,7 @@ Humans love to *see* things — so here's your companion, alive on the desktop, 
 
 Symbio Basic connects to an **AI gateway** for all conversations. This is where your companion's intelligence, personality, and tools come from.
 
-**Recommended: [Hermes]https://github.com/NousResearch/hermes-agent** — an open-source AI agent framework that gives your companion:
+**Recommended: [Hermes](https://github.com/NousResearch/hermes-agent)** — an open-source AI agent framework that gives your companion:
 - Skills and tools (web search, code execution, file access, etc.)
 - Persistent memory across sessions
 - Emerging and an evolving personality via SOUL.md
@@ -150,7 +153,7 @@ On first launch, a friendly setup wizard asks for one AI key — paste it, and y
 
 ```bash
 # Clone the repo
-git clone https://github.com/Beyond-Horizons-Institute
+git clone https://github.com/Beyond-Horizons-Institute/symbio-basic.git
 cd symbio-basic
 
 # Install dependencies
