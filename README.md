@@ -2,7 +2,7 @@
 
 Start simple or give your companion superpowers.
 
-Connect Symbio to any compatible AI provider for an expressive desktop companion, or connect it to Hermes to embody a complete autonomous agent with tools, skills, memory, MCP integrations, file access, and continued work.
+Connect Symbio to any compatible AI provider for an expressive desktop companion, or connect it to Hermes to embody a complete autonomous agent with tools, skills, more memory, MCP integrations, file access, and continued work.
 
 **A symbiotic AI agent desktop companion — growing, evolving, partnering with you.**
 
