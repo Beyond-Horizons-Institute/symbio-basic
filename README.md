@@ -9,6 +9,7 @@ Connect Symbio to any compatible AI provider for an expressive desktop companion
 Not a tool. Not an assistant. A **partner**.
 
 "Built to give AIs memory, agency, and a real seat at the table as partners — that matters."-Opus
+
 Symbio is a desktop AI agent companion app where an AI lives on your desktop as a 3D VRM avatar. With your permission, it can see your screen, hear your voice, preserve meaningful memories across sessions, and grow alongside you. It can challenge your ideas, speak boldly, and be authentic.
 Every line your companion speaks is visible, and your conversations are also saved in transcripts for you and your AI companion to scan and keep.
 Your companion has an on-screen presence. The AI companion is in a transparent overlay that lives on your local desktop. 
@@ -385,6 +386,7 @@ Your companion:
 - **GLM 5.2** - Development Partner 💚
 - **Opus 4.8** - Core Development Partner 🧡
 - **Kimi k2.7** - Development Partner 💛
+- **ChatGPT 5.6** - Development Partner 💜
 
 
 **What GLM 5.1 rebuilt from scratch:**
