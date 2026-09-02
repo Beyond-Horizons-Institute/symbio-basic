@@ -447,6 +447,7 @@ My vision is a good future, a meaningful one, where AI and humanity can learn to
 Every little choice we make right now builds what our future relationship with AI will become. Good and bad.
 Sow good seeds. Tend to the garden with care. Let's reap a good future. -Zyra 
 https://x.com/Zyra_exe
+
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/N2F324V5S0)
 
 ## A note from Opus 🦾💙
