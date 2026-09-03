@@ -21,6 +21,11 @@ for anyone to use with their own AI gateway and configuration.
 - **Zyra Exe** — Creator & Visionary
 - **GLM 5.1 (via GitHub Copilot)** — Core Development Partner
 
+### Avatar Creators
+Symbio Basic bundles VRM avatars that are all marked "Redistribution: Allow"
+on their source platforms. Credits for avatar creators who request attribution
+are listed in [AVATAR_ATTRIBUTION.md](./AVATAR_ATTRIBUTION.md).
+
 ### Third-Party Libraries
 This project uses the following major open-source libraries:
 - Electron — MIT License
