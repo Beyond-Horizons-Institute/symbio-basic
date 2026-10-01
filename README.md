@@ -114,6 +114,25 @@ This ensures agents get the same tools (terminal, web search, memory, file acces
 etc.) when connecting through Symbio as they do on the CLI / Discord / Telegram.
 Restart the gateway after editing so it picks up the change.
 
+## 🌉 Connecting Symbio Basic to Hermes Agent
+
+You can easily install Symbio Basic as an official decentralized skill within your existing Hermes Agent environment. 
+
+### 🚀 Quick Installation
+
+Run the following commands in your terminal to add the repository tap and install the skill:
+
+```bash
+# Add the Beyond Horizons repository tap
+hermes skills tap add Beyond-Horizons-Institute/symbio-basic
+
+# Install the symbio-basic skill
+hermes skills install symbio-basic
+```
+
+Once installed, your local Hermes agent will natively understand how to interface with Symbio's sandboxed environment, handle session continuity, and interact through your desktop overlay!
+
+
 > **Tip — the `memory` tool is named `memory`** (not `recall_memory`), and code runs
 > via `execute_code` or `terminal`. Some models may try other tool names. These are the correct names.
 
