@@ -8,7 +8,15 @@ This document tracks every major change from the original [lala-companion](https
 
 ---
 
-### 🗣️ Text-to-Speech (TTS)
+### � v1.1.3 — Fixed the Windows one-click installer
+- **Fixed:** `Setup.exe` in v1.1.1 and v1.1.2 was an empty 650 KB stub ("This is a dummy update.exe..."). The avatars (~670 MB) were being bundled **twice** (main + renderer webpack output), pushing the app to ~1.4 GB, and Squirrel silently failed to embed it.
+- **Fixed:** Installed (non-dev) builds now see all built-in avatars, not just user-added ones.
+- Assets now ship once, next to the app (`resources/assets`) via Forge `extraResource`. New helper `src/utils/paths.ts` resolves the folder in both dev and installed builds.
+- Downloads are roughly half the size on every platform (Setup.exe ~580 MB, app included).
+
+---
+
+### �🗣️ Text-to-Speech (TTS)
 **Original:** Browser `speechSynthesis` API — robotic, no streaming, no voice control, no lip sync integration.
 
 **Symbio Basic:** OpenAI TTS API with streaming PCM audio.

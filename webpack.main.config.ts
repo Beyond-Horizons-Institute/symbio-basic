@@ -37,11 +37,8 @@ export const mainConfig: Configuration = {
 plugins.push(
   new CopyWebpackPlugin({
     patterns: [
-      {
-        from: "assets", // source folder in project root
-        to: "assets", // destination folder in output directory
-        noErrorOnMissing: true,
-      },
+      // NOTE: assets/ is intentionally NOT copied here anymore. It ships once
+      // via forge.config.ts `extraResource` (see src/utils/paths.ts).
       // sqlite-vec ships its loadable extension (vec0.so/.dylib/.dll) in a
       // platform-specific package and resolves it via require.resolve at
       // runtime — which webpack can't trace and which can't be read from

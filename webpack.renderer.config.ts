@@ -36,9 +36,12 @@ export const rendererConfig: Configuration = {
     ...rendererPlugins,
     new CopyWebpackPlugin({
       patterns: [
+        // ONLY animations: the overlay loads them via relative URLs
+        // ("../assets/animations/..."). Avatars/VRMs are NOT copied here —
+        // they ship once via forge extraResource and load over symbio://.
         {
-          from: "assets",
-          to: "assets",
+          from: "assets/animations",
+          to: "assets/animations",
           noErrorOnMissing: true,
         },
       ],

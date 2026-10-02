@@ -21,6 +21,7 @@
 import { readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync, copyFileSync, unlinkSync } from "fs";
 import { join, basename, extname } from "path";
 import { app } from "electron";
+import { getAssetsRoot } from "./paths";
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -67,7 +68,7 @@ export interface AvatarChoice {
 
 /** Built-in avatars (shipped with the app) */
 function getBuiltinAvatarsDir(): string {
-  return join(app.getAppPath(), "assets", "avatars");
+  return join(getAssetsRoot(), "avatars");
 }
 
 /** User-installed avatars (drag & drop, add button) */

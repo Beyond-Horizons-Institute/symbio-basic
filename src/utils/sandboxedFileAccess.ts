@@ -25,6 +25,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSy
 import { join, normalize, relative, extname } from "path";
 import { app } from "electron";
 import { recordMemoryHash } from "./memoryIntegrity";
+import { getAssetsRoot } from "./paths";
 
 // ── Configuration ──────────────────────────────────────────────────
 
@@ -59,7 +60,7 @@ function getMemoryDir(): string {
 function getAssetsDir(): string {
   // In development, assets are in the project root.
   // In production, they're in the app's resources directory.
-  return join(process.resourcesPath || app.getAppPath(), "assets");
+  return getAssetsRoot();
 }
 
 // ── Path Prefix Mapping ────────────────────────────────────────────

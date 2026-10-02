@@ -24,6 +24,8 @@ dotenv.config();
 const ICON_BASE = join(__dirname, "assets", "icons", "icon");
 
 const config: ForgeConfig = {
+  // Optional local override (e.g. FORGE_OUT_DIR=out2) if `out/` is locked.
+  ...(process.env.FORGE_OUT_DIR ? { outDir: process.env.FORGE_OUT_DIR } : {}),
   packagerConfig: {
     // We copy sqlite-vec's loadable extension as `native_modules/vec0.node`
     // (see CopyWebpackPlugin), so AutoUnpackNativesPlugin's `**/*.node`
@@ -33,6 +35,13 @@ const config: ForgeConfig = {
     executableName: "symbio-basic",
     // electron-packager auto-appends the right extension per platform.
     icon: ICON_BASE,
+    // Ship the big assets folder (avatars ~670 MB) ONCE, outside the asar, at
+    // <resources>/assets. Main-process code reads it via getAssetsRoot().
+    // Previously webpack copied assets into BOTH .webpack/main and
+    // .webpack/renderer (2x size, >1 GB), which broke the Squirrel Setup.exe
+    // (it silently produced a 650 KB stub) and the app couldn't find them.
+    // AGENT.md / SKILL.md are read at runtime by symbioDocs.ts.
+    extraResource: ["assets", "AGENT.md", "SKILL.md"],
   },
   // Native modules are processed by the asset-relocator loader (see
   // webpack.rules.ts) and unpacked from the asar by the

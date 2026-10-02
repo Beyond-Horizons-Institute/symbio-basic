@@ -90,6 +90,8 @@ typings/
 
 # Electron-Forge
 out/
+out2/
+out_old_delete_me/
 
 # Local dev/verification helper scripts (not part of the app)
 scripts/

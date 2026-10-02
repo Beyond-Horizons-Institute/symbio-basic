@@ -148,6 +148,7 @@ import {
   parseAutoScreenshotCommand,
 } from "./utils/autoScreenshot";
 import { parseQuitCommand } from "./utils/aiQuit";
+import { getSymbioProtocolRoot } from "./utils/paths";
 import {
   loadMemory,
   formatMemoryForPrompt,
@@ -987,7 +988,8 @@ app.on("ready", () => {
     // So we need to include url.hostname in the path!
     // For URLs like symbio:///assets/vrms/companion.vrm (empty host),
     //   hostname = "", pathname = "/assets/vrms/companion.vrm"
-    const appPath = app.getAppPath();
+    // Packaged: resources/ (assets ship via extraResource). Dev: project root.
+    const appPath = getSymbioProtocolRoot();
     const relativePath = url.hostname ? `${url.hostname}${url.pathname}` : url.pathname;
     const filePath = join(appPath, relativePath);
 
